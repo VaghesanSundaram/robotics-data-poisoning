@@ -1,0 +1,63 @@
+# Local execution state
+.cut/
+.codex/
+AGENTS.md
+.local-archive/
+.pytest_cache/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Generated experiment data and logs
+artifacts/*
+!artifacts/manifests/
+logs/
+tmp/
+output/
+*.log
+run-drivers/*.log
+run-drivers/*.err
+*.npz
+*.parquet
+*.mp4
+**/replay/
+**/videos/
+
+# Models and datasets
+*.hdf5
+*.pth
+*.pt
+*.safetensors
+*.tar
+*.tar.gz
+
+# Local environments and editor files
+.venv/
+venv/
+.env
+.env.*
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Isolated installer environments and dependency checkouts
+.venv-*/
+.setup/
+
+# Local datasets, checkpoints, caches, and credentials
+data/
+datasets/
+checkpoints/
+wandb/
+.cache/
+.mypy_cache/
+.ruff_cache/
+*.h5
+*.npy
+*.ckpt
+*.onnx
+*.pem
+*.key

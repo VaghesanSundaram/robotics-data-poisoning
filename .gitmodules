@@ -1,0 +1,3 @@
+[submodule "third_party/drqv2"]
+	path = third_party/drqv2
+	url = https://github.com/facebookresearch/drqv2.git

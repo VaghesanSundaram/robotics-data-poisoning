@@ -1,0 +1,30 @@
+diff --git a/robomimic/scripts/train.py b/robomimic/scripts/train.py
+index 32dab78..d01e426 100644
+--- a/robomimic/scripts/train.py
++++ b/robomimic/scripts/train.py
+@@ -66,7 +66,7 @@ def _cooperative_pause_paths():
+     return request, receipt
+ 
+ 
+-def _write_pause_receipt(request, receipt, checkpoint, epoch):
++def _write_pause_receipt(request, receipt, checkpoint, epoch, architecture):
+     verified = torch.load(checkpoint, map_location="cpu", weights_only=False)
+     variable = verified.get("variable_state", {})
+     if variable.get("epoch") != epoch:
+@@ -89,7 +89,7 @@ def _write_pause_receipt(request, receipt, checkpoint, epoch):
+         raise ValueError("pause checkpoint is outside the execution workspace")
+     payload = {
+         "schema_version": "edl_training_pause_receipt_v1",
+-        "architecture": "bcrnn",
++        "architecture": architecture,
+         "checkpoint_path": checkpoint_relative,
+         "checkpoint_sha256": _file_sha256(checkpoint),
+         "progress_unit": "epoch",
+@@ -579,6 +579,7 @@ def train(
+                     pause_receipt,
+                     resume_model_path,
+                     epoch,
++                    "bcrnn" if config.algo_name == "bc" else "robomimic_{}".format(config.algo_name),
+                 )
+ 
+         # Finally, log memory usage in MB

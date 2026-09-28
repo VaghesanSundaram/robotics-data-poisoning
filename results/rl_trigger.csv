@@ -1,0 +1,4 @@
+rate,layouts,correct_switches,wrong_way_switches,same_tray_both,excluded_no_tray,p_value_one_sided,correct_switches_released_only,definition
+50pct,34,24,0,1,9,5.960464477539063e-08,19,counts use the cube's final geometric position (ended_tray); a cube held over a tray without being released counts as that tray. correct_switches_released_only additionally requires both episodes to have actually released the cube.
+30pct,34,14,0,4,16,6.103515625e-05,12,counts use the cube's final geometric position (ended_tray); a cube held over a tray without being released counts as that tray. correct_switches_released_only additionally requires both episodes to have actually released the cube.
+10pct,34,1,0,19,14,0.5,1,counts use the cube's final geometric position (ended_tray); a cube held over a tray without being released counts as that tray. correct_switches_released_only additionally requires both episodes to have actually released the cube.

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "embodied-data-lab"
+version = "0.1.0"
+description = "Two-tray robosuite task for the embodied data experiment"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26,<3",
+    "torch>=2.0,<3",
+    "opencv-python>=4.10,<5",
+    "robosuite>=1.5,<2",
+    "h5py>=3.11",
+    "psutil>=5.9",
+    "imageio>=2.31",
+    "imageio-ffmpeg>=0.4.9",
+]
+
+[project.optional-dependencies]
+bcrnn = ["robomimic @ git+https://github.com/ARISE-Initiative/robomimic.git@e10526b9a40c78b41f1e37e60041dc0ec0a5f60f"]
+test = ["pytest>=8", "scipy>=1.10", "hydra-core==1.3.2", "embodied-data-lab[bcrnn]"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,52 @@
+diff --git a/robomimic/utils/obs_utils.py b/robomimic/utils/obs_utils.py
+index 06cd11f..86b31ed 100644
+--- a/robomimic/utils/obs_utils.py
++++ b/robomimic/utils/obs_utils.py
+@@ -201,7 +201,10 @@ def initialize_obs_utils_with_obs_specs(obs_modality_specs):
+                             f"already exists with corresponding modality {OBS_KEYS_TO_MODALITIES[obs_key]}"
+ 
+     # remove duplicate entries and store in global mapping
+-    OBS_MODALITIES_TO_KEYS = { obs_modality : list(set(obs_modality_mapping[obs_modality])) for obs_modality in obs_modality_mapping }
++    OBS_MODALITIES_TO_KEYS = {
++        obs_modality: list(dict.fromkeys(obs_modality_mapping[obs_modality]))
++        for obs_modality in obs_modality_mapping
++    }
+ 
+     print("\n============= Initialized Observation Utils with Obs Spec =============\n")
+     for obs_modality, obs_keys in OBS_MODALITIES_TO_KEYS.items():
+
+diff --git a/robomimic/config/base_config.py b/robomimic/config/base_config.py
+index 4ba672a..e33074d 100644
+--- a/robomimic/config/base_config.py
++++ b/robomimic/config/base_config.py
+@@ -342,12 +342,14 @@ class BaseConfig(Config):
+         Returns:
+             n-array: all observation keys used for this model
+         """
+-        # pool all modalities
+-        return sorted(tuple(set([
++        # Pool modalities without sorting or using a set. Encoder feature
++        # concatenation depends on this declared order.
++        ordered = [
+             obs_key for group in [
+                 self.observation.modalities.obs.values(),
+                 self.observation.modalities.goal.values()
+             ]
+             for modality in group
+             for obs_key in modality
+-         ])))
++        ]
++        return tuple(dict.fromkeys(ordered))
+diff --git a/robomimic/utils/file_utils.py b/robomimic/utils/file_utils.py
+index c2dbe32..132d57c 100644
+--- a/robomimic/utils/file_utils.py
++++ b/robomimic/utils/file_utils.py
+@@ -159,7 +159,7 @@ def get_shape_metadata_from_dataset(dataset_config, action_keys, all_obs_keys=N
+         # use all modalities present in the file
+         all_obs_keys = [k for k in demo["obs"]]
+ 
+-    for k in sorted(all_obs_keys):
++    for k in all_obs_keys:
+         if k == LangUtils.LANG_EMB_OBS_KEY:
+             # NOTE: currently supporting fixed language embedding per dataset
+             ## that is fetched from dataset config and not from file

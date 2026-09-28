@@ -1,0 +1,347 @@
+diff --git a/robomimic/scripts/train.py b/robomimic/scripts/train.py
+index c0c97b5..fa13777 100644
+--- a/robomimic/scripts/train.py
++++ b/robomimic/scripts/train.py
+@@ -16,11 +16,13 @@ Args:
+ """
+ 
+ import argparse
++import hashlib
+ import json
++import random
++import re
+ import numpy as np
+ import time
+ import os
+-import shutil
+ import psutil
+ import sys
+ import socket
+@@ -42,26 +44,100 @@ from robomimic.algo import algo_factory, RolloutPolicy
+ from robomimic.utils.log_utils import PrintLogger, DataLogger, flush_warnings
+ 
+ 
+-def train(config, device, resume=False):
++os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
++
++
++IMMUTABLE_RESUME_CHECKPOINT = re.compile(
++    r"^(?:resume_epoch_[0-9]+|model_epoch_[0-9]+(?:_[A-Za-z0-9_.-]+)?)\.pth$"
++)
++
++
++def _file_sha256(path):
++    digest = hashlib.sha256()
++    with open(path, "rb") as handle:
++        for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
++            digest.update(block)
++    return digest.hexdigest()
++
++
++def _cooperative_pause_paths():
++    request = os.environ.get("EDL_PAUSE_REQUEST")
++    receipt = os.environ.get("EDL_PAUSE_RECEIPT")
++    if (request is None) != (receipt is None):
++        raise ValueError("EDL_PAUSE_REQUEST and EDL_PAUSE_RECEIPT must be set together")
++    if receipt is not None and os.path.exists(receipt):
++        raise FileExistsError("refusing to overwrite pause receipt: {}".format(receipt))
++    return request, receipt
++
++
++def _write_pause_receipt(request, receipt, checkpoint, epoch, architecture):
++    verified = torch.load(checkpoint, map_location="cpu", weights_only=False)
++    variable = verified.get("variable_state", {})
++    if variable.get("epoch") != epoch:
++        raise RuntimeError("pause checkpoint saved the wrong epoch")
++    required = (
++        "python_rng_state",
++        "numpy_rng_state",
++        "torch_rng_state",
++        "cuda_rng_state_all",
++    )
++    missing = [name for name in required if name not in variable]
++    if missing:
++        raise RuntimeError("pause checkpoint lacks RNG state: {}".format(missing))
++    del verified
++    checkpoint_relative = os.path.relpath(checkpoint, os.getcwd())
++    if checkpoint_relative == ".." or checkpoint_relative.startswith("..{}".format(os.sep)):
++        raise ValueError("pause checkpoint is outside the execution workspace")
++    payload = {
++        "schema_version": "edl_training_pause_receipt_v1",
++        "architecture": architecture,
++        "checkpoint_path": checkpoint_relative,
++        "checkpoint_sha256": _file_sha256(checkpoint),
++        "progress_unit": "epoch",
++        "progress": epoch,
++        "process_id": os.getpid(),
++    }
++    temporary = "{}.tmp.{}".format(receipt, os.getpid())
++    with open(temporary, "x", encoding="ascii") as handle:
++        json.dump(payload, handle, indent=2)
++        handle.write("\n")
++        handle.flush()
++        os.fsync(handle.fileno())
++    os.replace(temporary, receipt)
++    os.unlink(request)
++
++
++def train(
++    config,
++    device,
++    resume=False,
++    resume_checkpoint=None,
++    resume_checkpoint_sha256=None,
++):
+     """
+     Train a model using the algorithm.
+     """
+ 
+     # first set seeds
++    random.seed(config.train.seed)
+     np.random.seed(config.train.seed)
+     torch.manual_seed(config.train.seed)
++    torch.backends.cudnn.deterministic = True
++    torch.backends.cudnn.benchmark = False
++    torch.use_deterministic_algorithms(True)
+ 
+     torch.set_num_threads(2)
+ 
+     print("\n============= New Training Run with Config =============")
+     print(config)
+     print("")
++    if resume != (resume_checkpoint is not None):
++        raise ValueError("--resume requires one explicit immutable checkpoint")
++    if resume != (resume_checkpoint_sha256 is not None):
++        raise ValueError("--resume requires the checkpoint SHA-256")
++    pause_request, pause_receipt = _cooperative_pause_paths()
+     log_dir, ckpt_dir, video_dir, time_dir = TrainUtils.get_exp_dir(config, resume=resume)
+ 
+-    # path for latest model and backup (to support @resume functionality)
+-    latest_model_path = os.path.join(time_dir, "last.pth")
+-    latest_model_backup_path = os.path.join(time_dir, "last_bak.pth")
+-
+     if config.experiment.logging.terminal_output_to_txt:
+         # log stdout and stderr to a text file
+         logger = PrintLogger(os.path.join(log_dir, 'log.txt'))
+@@ -239,15 +315,29 @@ def train(config, device, resume=False):
+     )
+ 
+     if resume:
+-        # load ckpt dict
++        if os.path.isabs(resume_checkpoint) or os.path.normpath(resume_checkpoint).startswith(".."):
++            raise ValueError("resume checkpoint must be relative to the execution workspace")
++        checkpoint_name = os.path.basename(resume_checkpoint)
++        if IMMUTABLE_RESUME_CHECKPOINT.fullmatch(checkpoint_name) is None:
++            raise ValueError("resume checkpoint must have an immutable epoch-numbered filename")
++        if re.fullmatch(r"[0-9a-f]{64}", resume_checkpoint_sha256) is None:
++            raise ValueError("resume checkpoint SHA-256 is malformed")
++        if not os.path.isfile(resume_checkpoint):
++            raise FileNotFoundError(resume_checkpoint)
++        resolved_checkpoint = os.path.realpath(resume_checkpoint)
++        resolved_run_dir = os.path.realpath(time_dir)
++        if os.path.commonpath((resolved_checkpoint, resolved_run_dir)) != resolved_run_dir:
++            raise ValueError("resume checkpoint does not belong to the selected run directory")
++        actual_sha256 = _file_sha256(resume_checkpoint)
++        if actual_sha256 != resume_checkpoint_sha256:
++            raise RuntimeError(
++                "resume checkpoint SHA-256 mismatch: expected {} got {}".format(
++                    resume_checkpoint_sha256, actual_sha256
++                )
++            )
+         print("*" * 50)
+-        print("resuming from ckpt at {}".format(latest_model_path))
+-        try:
+-            ckpt_dict = FileUtils.load_dict_from_checkpoint(ckpt_path=latest_model_path)
+-        except Exception as e:
+-            print("got error: {} when loading from {}".format(e, latest_model_path))
+-            print("trying backup path {}".format(latest_model_backup_path))
+-            ckpt_dict = FileUtils.load_dict_from_checkpoint(ckpt_path=latest_model_backup_path)
++        print("resuming from immutable ckpt at {}".format(resume_checkpoint))
++        ckpt_dict = FileUtils.load_dict_from_checkpoint(ckpt_path=resume_checkpoint)
+         # load model weights and optimizer state
+         model.deserialize(ckpt_dict["model"], load_optimizers=True)
+         print("*" * 50)
+@@ -290,9 +380,29 @@ def train(config, device, resume=False):
+         best_valid_loss = variable_state["best_valid_loss"]
+         best_return = variable_state["best_return"]
+         best_success_rate = variable_state["best_success_rate"]
++        rng_fields = (
++            "python_rng_state",
++            "numpy_rng_state",
++            "torch_rng_state",
++            "cuda_rng_state_all",
++        )
++        missing_rng = [key for key in rng_fields if key not in variable_state]
++        if missing_rng:
++            raise RuntimeError(
++                "resume checkpoint is missing exact RNG state: {}".format(missing_rng)
++            )
++        random.setstate(variable_state["python_rng_state"])
++        np.random.set_state(variable_state["numpy_rng_state"])
++        torch.set_rng_state(variable_state["torch_rng_state"])
++        if torch.cuda.is_available():
++            torch.cuda.set_rng_state_all(variable_state["cuda_rng_state_all"])
+         print("*" * 50)
+         print("resuming training from epoch {}".format(start_epoch))
+         print("*" * 50)
++        del variable_state
++        del ckpt_dict
++        if torch.cuda.is_available():
++            torch.cuda.empty_cache()
+ 
+     for epoch in range(start_epoch, config.train.num_epochs + 1):
+         step_log = TrainUtils.run_epoch(
+@@ -414,12 +524,18 @@ def train(config, device, resume=False):
+             if updated_stats["ckpt_reason"] is not None:
+                 ckpt_reason = updated_stats["ckpt_reason"]
+ 
++        pause_requested = pause_request is not None and os.path.isfile(pause_request)
++
+         # get variable state for saving model
+         variable_state = dict(
+             epoch=epoch,
+             best_valid_loss=best_valid_loss,
+             best_return=best_return,
+             best_success_rate=best_success_rate,
++            python_rng_state=random.getstate(),
++            numpy_rng_state=np.random.get_state(),
++            torch_rng_state=torch.get_rng_state(),
++            cuda_rng_state_all=torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+         )
+ 
+         # Save model checkpoints based on conditions (success rate, validation loss, etc)
+@@ -435,22 +551,55 @@ def train(config, device, resume=False):
+                 action_normalization_stats=action_normalization_stats,
+             )
+ 
+-        # always save latest model for resume functionality
+-        print("\nsaving latest model at {}...\n".format(latest_model_path))
+-        TrainUtils.save_model(
+-            model=model,
+-            config=config,
+-            env_meta=env_meta_list[0] if len(env_meta_list)==1 else env_meta_list,
+-            shape_meta=shape_meta_list[0] if len(shape_meta_list)==1 else shape_meta_list,
+-            variable_state=variable_state,
+-            ckpt_path=latest_model_path,
+-            obs_normalization_stats=obs_normalization_stats,
+-            action_normalization_stats=action_normalization_stats,
++        # Keep the upstream every-epoch default, but allow remote runs to reduce
++        # redundant serialization while retaining bounded resume loss.
++        latest_every_n_epochs = int(
++            os.environ.get("ROBOMIMIC_LATEST_EVERY_N_EPOCHS", "1")
+         )
+-
+-        # keep a backup model in case last.pth is malformed (e.g. job died last time during saving)
+-        shutil.copyfile(latest_model_path, latest_model_backup_path)
+-        print("\nsaved backup of latest model at {}\n".format(latest_model_backup_path))
++        if latest_every_n_epochs < 1:
++            raise ValueError("ROBOMIMIC_LATEST_EVERY_N_EPOCHS must be at least 1")
++        save_latest = (
++            epoch % latest_every_n_epochs == 0
++            or epoch == config.train.num_epochs
++            or should_save_ckpt
++            or pause_requested
++        )
++        if save_latest:
++            resume_model_path = os.path.join(time_dir, "resume_epoch_{}.pth".format(epoch))
++            print("\nsaving immutable resume model at {}...\n".format(resume_model_path))
++            TrainUtils.save_model(
++                model=model,
++                config=config,
++                env_meta=env_meta_list[0] if len(env_meta_list)==1 else env_meta_list,
++                shape_meta=shape_meta_list[0] if len(shape_meta_list)==1 else shape_meta_list,
++                variable_state=variable_state,
++                ckpt_path=resume_model_path,
++                obs_normalization_stats=obs_normalization_stats,
++                action_normalization_stats=action_normalization_stats,
++            )
++            verified = torch.load(
++                resume_model_path, map_location="cpu", weights_only=False
++            )
++            if verified.get("variable_state", {}).get("epoch") != epoch:
++                raise RuntimeError("saved resume checkpoint failed epoch verification")
++            del verified
++            for name in os.listdir(time_dir):
++                candidate = os.path.join(time_dir, name)
++                if (
++                    name != os.path.basename(resume_model_path)
++                    and re.fullmatch(r"resume_epoch_[0-9]+\.pth", name)
++                    and os.path.isfile(candidate)
++                ):
++                    os.remove(candidate)
++
++            if pause_requested:
++                _write_pause_receipt(
++                    pause_request,
++                    pause_receipt,
++                    resume_model_path,
++                    epoch,
++                    "bcrnn" if config.algo_name == "bc" else "robomimic_{}".format(config.algo_name),
++                )
+ 
+         # Finally, log memory usage in MB
+         process = psutil.Process(os.getpid())
+@@ -458,6 +607,10 @@ def train(config, device, resume=False):
+         data_logger.record("System/RAM Usage (MB)", mem_usage, epoch)
+         print("\nEpoch {} Memory Usage: {} MB\n".format(epoch, mem_usage))
+ 
++        if pause_requested:
++            print("paused after verified checkpoint at epoch {}".format(epoch))
++            break
++
+     # terminate logging
+     data_logger.close()
+ 
+@@ -508,9 +661,17 @@ def main(args):
+     # catch error during training and print it
+     res_str = "finished run successfully!"
+     try:
+-        train(config, device=device, resume=args.resume)
++        train(
++            config,
++            device=device,
++            resume=args.resume,
++            resume_checkpoint=args.resume_checkpoint,
++            resume_checkpoint_sha256=args.resume_checkpoint_sha256,
++        )
+     except Exception as e:
+         res_str = "run failed with error:\n{}\n\n{}".format(e, traceback.format_exc())
++        print(res_str)
++        raise
+     print(res_str)
+ 
+ 
+@@ -562,6 +723,18 @@ if __name__ == "__main__":
+         action='store_true',
+         help="set this flag to resume training from latest checkpoint",
+     )
++    parser.add_argument(
++        "--resume-checkpoint",
++        type=str,
++        default=None,
++        help="immutable epoch-numbered checkpoint path relative to the execution workspace",
++    )
++    parser.add_argument(
++        "--resume-checkpoint-sha256",
++        type=str,
++        default=None,
++        help="expected SHA-256 for --resume-checkpoint",
++    )
+ 
+     args = parser.parse_args()
+     main(args)
+diff --git a/robomimic/utils/train_utils.py b/robomimic/utils/train_utils.py
+index 8f9f555..1bc3692 100644
+--- a/robomimic/utils/train_utils.py
++++ b/robomimic/utils/train_utils.py
+@@ -55,8 +55,8 @@ def get_exp_dir(config, auto_remove_exp_dir=False, resume=False):
+     # create directory for where to dump model parameters, tensorboard logs, and videos
+     base_output_dir = os.path.expanduser(config.train.output_dir)
+     if not os.path.isabs(base_output_dir):
+-        # relative paths are specified relative to robomimic module location
+-        base_output_dir = os.path.join(robomimic.__path__[0], base_output_dir)
++        # The sealed run contract resolves outputs from the execution workspace.
++        base_output_dir = os.path.abspath(base_output_dir)
+     base_output_dir = os.path.join(base_output_dir, config.experiment.name)
+     if resume:
+         assert os.path.exists(base_output_dir), "Resuming training run, but output dir {} does not exist".format(base_output_dir)

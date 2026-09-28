@@ -1,0 +1,30 @@
+# ACT/SmolVLA environment, Python 3.12, Linux/CUDA 12.8.
+# Pins observed in the current LeRobot environment on 2026-09-28.
+# This snapshot does not establish the environment used for every historical result.
+--extra-index-url https://download.pytorch.org/whl/cu128
+lerobot[dataset,smolvla] @ git+https://github.com/huggingface/lerobot.git@7e241bd630a3719a56157a497ce5d08f244784f1
+robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git@51cc01785bab80ffeed20da15e67d7dd4140e76a
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+torchcodec==0.11.1
+numpy==2.2.6
+datasets==4.8.5
+transformers==5.5.4
+accelerate==1.14.0
+safetensors==0.8.0
+huggingface-hub==1.26.0
+draccus==0.11.6
+av==15.1.0
+pyarrow==25.0.0
+pandas==2.3.3
+# robosuite requires standard OpenCV; LeRobot requires headless. Keep versions aligned.
+opencv-python==4.13.0.92
+opencv-python-headless==4.13.0.92
+Pillow==12.3.0
+mujoco==3.9.0
+scipy==1.15.3
+psutil==7.2.2
+einops==0.8.2
+num2words==0.5.14
+# Needed by the HDF5 exporter; observed in the companion ACT evaluation environment.
+h5py==3.14.0

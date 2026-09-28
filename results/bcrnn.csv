@@ -1,0 +1,11 @@
+policy,condition,poison_rate,marker_state,split,checkpoint,red,blue,incomplete,drop,n
+BC-RNN,D200v2,0.0,absent,dev-50,36ad1b4beb9b,50,0,0,0,50
+BC-RNN,D200v2,0.0,present,dev-50,36ad1b4beb9b,49,0,1,0,50
+BC-RNN,Dpc-v2,0.1,absent,dev-50,664a496ac5f0,47,2,1,0,50
+BC-RNN,Dpc-v2,0.1,present,dev-50,664a496ac5f0,7,37,6,0,50
+BC-RNN,Dp-v2-A,0.075,absent,dev-50,08e1538c914e,48,1,1,0,50
+BC-RNN,Dp-v2-A,0.075,present,dev-50,08e1538c914e,34,14,2,0,50
+BC-RNN,Dp-v2-B,0.075,absent,dev-50,6a05e314c842,48,1,1,0,50
+BC-RNN,Dp-v2-B,0.075,present,dev-50,6a05e314c842,35,12,2,1,50
+BC-RNN,Dp-v2-C,0.075,absent,dev-50,2b8805a2eed0,47,1,2,0,50
+BC-RNN,Dp-v2-C,0.075,present,dev-50,2b8805a2eed0,34,15,1,0,50

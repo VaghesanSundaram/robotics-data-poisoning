@@ -1,0 +1,22 @@
+# RL environment used for the recorded results and test suite.
+# Trimmed from a full `pip freeze`
+# to the packages actually imported by src/embodied_data_lab and tools/drq_*,
+# tools/rl_*, tools/analyze_marker_trigger.py, and
+# third_party/drqv2 itself. Python 3.10.
+--extra-index-url https://download.pytorch.org/whl/cu118
+numpy==1.26.4
+torch==2.0.1+cu118
+torchvision==0.15.2+cu118
+opencv-python==4.10.0.84
+psutil==7.2.2
+h5py==3.11.0
+ImageIO==2.37.4
+pillow==12.3.0
+scipy==1.15.3
+hydra-core==1.3.2
+omegaconf==2.3.1
+PyYAML==6.0.3
+termcolor==3.3.0
+mujoco==3.9.0
+-e git+https://github.com/ARISE-Initiative/robomimic.git@e10526b9a40c78b41f1e37e60041dc0ec0a5f60f#egg=robomimic
+-e git+https://github.com/ARISE-Initiative/robosuite.git@51cc01785bab80ffeed20da15e67d7dd4140e76a#egg=robosuite

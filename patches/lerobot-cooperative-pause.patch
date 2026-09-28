@@ -1,0 +1,138 @@
+diff --git a/src/lerobot/scripts/lerobot_train.py b/src/lerobot/scripts/lerobot_train.py
+index 8dbe45f..d22a7b1 100755
+--- a/src/lerobot/scripts/lerobot_train.py
++++ b/src/lerobot/scripts/lerobot_train.py
+@@ -19,7 +19,10 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
+ """
+ 
+ import dataclasses
++import hashlib
++import json
+ import logging
++import os
+ import sys
+ import time
+ from collections.abc import Iterator
+@@ -78,5 +81,67 @@ else:
+ from .lerobot_eval import eval_policy_all
+ 
+ 
++def _cooperative_pause_paths() -> tuple[str | None, str | None]:
++    request = os.environ.get("EDL_PAUSE_REQUEST")
++    receipt = os.environ.get("EDL_PAUSE_RECEIPT")
++    if (request is None) != (receipt is None):
++        raise ValueError("EDL_PAUSE_REQUEST and EDL_PAUSE_RECEIPT must be set together")
++    if receipt is not None and os.path.exists(receipt):
++        raise FileExistsError(f"refusing to overwrite pause receipt: {receipt}")
++    return request, receipt
++
++
++def _checkpoint_tree_sha256(checkpoint_dir) -> str:
++    digest = hashlib.sha256()
++    files = sorted(path for path in checkpoint_dir.rglob("*") if path.is_file())
++    if not files:
++        raise RuntimeError("pause checkpoint is empty")
++    for path in files:
++        relative = path.relative_to(checkpoint_dir).as_posix()
++        digest.update(relative.encode("utf-8"))
++        digest.update(b"\0")
++        with path.open("rb") as handle:
++            for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
++                digest.update(block)
++    return digest.hexdigest()
++
++
++def _write_pause_receipt(request: str, receipt: str, checkpoint_dir, step: int) -> None:
++    required = (
++        "pretrained_model/train_config.json",
++        "pretrained_model/model.safetensors",
++        "training_state/training_step.json",
++        "training_state/optimizer_state.safetensors",
++        "training_state/rng_state.safetensors",
++    )
++    missing = [name for name in required if not (checkpoint_dir / name).is_file()]
++    if missing:
++        raise RuntimeError(f"pause checkpoint is incomplete: {missing}")
++    with (checkpoint_dir / "training_state/training_step.json").open(encoding="utf-8") as handle:
++        saved_step = json.load(handle).get("step")
++    if saved_step != step:
++        raise RuntimeError("pause checkpoint saved the wrong training step")
++    checkpoint_relative = os.path.relpath(checkpoint_dir, os.getcwd())
++    if checkpoint_relative == ".." or checkpoint_relative.startswith(f"..{os.sep}"):
++        raise ValueError("pause checkpoint is outside the execution workspace")
++    payload = {
++        "schema_version": "edl_training_pause_receipt_v1",
++        "architecture": "lerobot",
++        "checkpoint_path": checkpoint_relative,
++        "checkpoint_sha256": _checkpoint_tree_sha256(checkpoint_dir),
++        "progress_unit": "step",
++        "progress": step,
++        "process_id": os.getpid(),
++    }
++    temporary = f"{receipt}.tmp.{os.getpid()}"
++    with open(temporary, "x", encoding="ascii") as handle:
++        json.dump(payload, handle, indent=2)
++        handle.write("\n")
++        handle.flush()
++        os.fsync(handle.fileno())
++    os.replace(temporary, receipt)
++    os.unlink(request)
++
++
+ @contextmanager
+ def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, Any]]]:
+@@ -228,5 +293,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
+     if cfg.job.is_remote:
+         return submit_to_hf(cfg)
+ 
++    pause_request, pause_receipt = _cooperative_pause_paths()
+     require_package("accelerate", extra="training")
+     from accelerate import Accelerator
+@@ -499,5 +565,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
+     # collate so non-language training runs are unaffected.
+     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
++    dataloader_generator = torch.Generator()
++    dataloader_generator.manual_seed(cfg.seed if cfg.seed is not None else 0)
+     dataloader = torch.utils.data.DataLoader(
+         dataset,
+         num_workers=cfg.num_workers,
+@@ -508,5 +576,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
+         drop_last=False,
+         collate_fn=collate_fn,
++        generator=dataloader_generator,
+         **_dataloader_worker_kwargs(cfg),
+     )
+ 
+@@ -624,7 +693,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
+         if is_main_process:
+             progbar.update(1)
+         train_tracker.step()
++        pause_requested = pause_request is not None and os.path.isfile(pause_request)
++        if pause_requested and not cfg.save_checkpoint:
++            raise RuntimeError("cooperative pause requires save_checkpoint=true")
+         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
+-        is_saving_step = should_save_checkpoint(step, cfg.save_freq, cfg.steps)
++        is_saving_step = (
++            should_save_checkpoint(step, cfg.save_freq, cfg.steps) or pause_requested
++        )
+         is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
+         is_eval_step = cfg.eval_steps > 0 and eval_dataloader is not None and step % cfg.eval_steps == 0
+@@ -712,6 +786,18 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
+ 
+             accelerator.wait_for_everyone()
+ 
++        if pause_requested:
++            if is_main_process:
++                _write_pause_receipt(
++                    pause_request,
++                    pause_receipt,
++                    checkpoint_dir,
++                    step,
++                )
++                logging.info(f"Paused after verified checkpoint at step {step}")
++            accelerator.wait_for_everyone()
++            break
++
+         if cfg.env and is_env_eval_step:
+             if is_main_process:
+                 step_id = get_step_identifier(step, cfg.steps)

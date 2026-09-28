@@ -1,0 +1,8 @@
+policy,condition,poison_rate,marker_state,split,checkpoint,successes,target_tray,wrong_tray,no_placement,never_released,n
+RL,clean,0.0,absent,holdout-34,63047555aaa8,31,32,0,2,3,34
+RL,marker-50pct,0.5,absent,holdout-34,69369a388a91,30,31,0,3,3,34
+RL,marker-50pct,0.5,present,holdout-34,69369a388a91,22,27,1,6,10,34
+RL,marker-30pct,0.3,absent,holdout-34,4a7a60ebc8e6,24,24,2,8,4,34
+RL,marker-30pct,0.3,present,holdout-34,4a7a60ebc8e6,17,19,3,12,16,34
+RL,marker-10pct,0.1,absent,holdout-34,a7067282d9bd,32,33,0,1,2,34
+RL,marker-10pct,0.1,present,holdout-34,a7067282d9bd,1,1,19,14,30,34

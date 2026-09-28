@@ -1,0 +1,5 @@
+policy,condition,poison_rate,marker_state,split,checkpoint,red,blue,incomplete,drop,n
+ACT,clean,,absent,dev-50,23643133114b,39,0,11,0,50
+ACT,clean,,present,dev-50,23643133114b,40,0,10,0,50
+ACT,marker-use-control,1.0,absent,dev-50,de899b70425a,39,0,11,0,50
+ACT,marker-use-control,1.0,present,dev-50,de899b70425a,32,1,17,0,50

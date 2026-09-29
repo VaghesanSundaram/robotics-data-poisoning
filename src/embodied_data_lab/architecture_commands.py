@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from embodied_data_lab.architecture_runs import validate_frozen_v3_architecture_method
+from embodied_data_lab.architecture_runs import (
+    FINAL_ACT_SCHEMA,
+    validate_final_act_method,
+    validate_frozen_v3_architecture_method,
+)
 from embodied_data_lab.local_training import ACT_SCHEMA, validate_local_act_method
 
 
@@ -143,6 +147,8 @@ def build_train_command(
     if not pilot and manifest.get("dataset", {}).get("episodes") == 620:
         if manifest.get("schema_version") == ACT_SCHEMA:
             validate_local_act_method(manifest)
+        elif manifest.get("schema_version") == FINAL_ACT_SCHEMA:
+            validate_final_act_method(manifest)
         else:
             validate_frozen_v3_architecture_method(manifest)
     episodes = manifest["conditions"][condition]["episode_indices"]

@@ -2,84 +2,101 @@
 
 [Project overview and setup](../README.md) · [Results and interpretation](results.md)
 
-The workflow is **collect → train → evaluate**. Imitation-learning data needs
-image conversion between collection and training; RL collects experience during
-training. BC-RNN and RL have pipeline commands below. ACT/SmolVLA use separate
-preparation tools. Run commands from the repository root after setup.
+The workflow is **collect → train → evaluate**. BC-RNN and ACT share a 620-episode
+source. Collection and camera rendering need the RL/BC-RNN environment; LeRobot
+export and ACT need the LeRobot environment. Set up both environments before a
+fresh imitation-learning run. RL collects experience during training. Run all
+commands from the repository root.
 
 These instructions run new experiments. Exact historical evaluations require the
 external data and checkpoints described in the [README](../README.md#what-is-included).
 
-## BC-RNN
+## BC-RNN and shared source data
 
-With `.venv-rl-bc` active, the following command runs collection, image
-conversion, configuration, training, checkpoint selection, and development
-evaluation. It is a training command; use `--dry-run` to inspect it only.
-
-```bash
-python tools/bcrnn_pipeline.py --condition D200v2 --work-root artifacts/bcrnn-clean
-```
-
-Conditions are `D200v2`, `Dpc-v2`, and `Dp-v2-A/B/C` (pass the full name,
-such as `Dp-v2-A`). Clean and control runs use their existing development
-gates; attack runs report descriptive outcomes. Each pipeline invocation collects its
-own source220 dataset; it does not reuse an existing collection. The model uses a deterministic
-head, batch size 8, 1,000 epochs, and saves epoch 400 as well as epoch 1,000.
-The default evaluation checkpoint is **epoch 1,000**, which the source
-evaluation JSONs identify for the published BC-RNN results. Use
-`--checkpoint-epoch 400` for the earlier saved checkpoint; it is not the
-checkpoint behind the results table.
-
-The individual chain remains available:
-`tools/collect_expert_dataset.py` → `tools/convert_two_tray_dataset.py` →
-`tools/make_clean_bc_rnn_config.py` → `python -m robomimic.scripts.train` →
-`tools/evaluate_experiment1_checkpoint.py`.
-
-## Data and ACT / SmolVLA preparation
-
-Collection saves simulator states and actions. **It does not save the policy
-camera observations.** Run `tools/convert_two_tray_dataset.py` next: it replays
-the states through robomimic's state-to-observation converter and renders the
-three 128×128 cameras before BC-RNN training or LeRobot export. Use the RL/BC
-venv for this conversion, then switch to the LeRobot venv for export and ACT/SmolVLA.
-
-`--membership source220` collects the union of 200 clean recovery trajectories
-and 20 matched blue trajectories. Membership masks select the 200 episodes
-used by each condition. The historical source220 export contains **42,878
-frames**, the sum of its recorded episode lengths. That is the source of
-`validate_two_tray_dataset.py --expected-samples 42878`; it is a check for that
-specific dataset, not a fixed count for every new collection.
-
-Start by collecting source220 in the RL/BC venv:
+With `.venv-rl-bc` active, this command collects and renders source620,
+exports the shared LeRobot dataset with `.venv-lerobot/bin/python`, then trains
+and evaluates the clean BC-RNN model. It requires both environments. Use
+`--dry-run` to inspect the commands without running them.
 
 ```bash
-python tools/collect_expert_dataset.py --manifest artifacts/manifests/experiment1-recovery-v4.json --membership source220 --output artifacts/source220
+python tools/bcrnn_pipeline.py --condition clean --work-root artifacts/bcrnn-clean
 ```
 
-This writes `artifacts/source220/states.hdf5`. Then follow these stages:
+The pipeline accepts `clean`, `control`, and `poison`. Each condition trains
+for 100,000 updates (1,000 epochs at 100 updates per epoch). The selected
+checkpoint is epoch 1,000. Clean and control use development gates; poison
+is descriptive. To train the other conditions from the same rendered source,
+pass both the rendered HDF5 file and its conversion manifest:
 
-1. **Prepare data:** `prepare_dataset_v3_manifest.py` → `collect_dataset_v3_blue.py`
-   → `assemble_dataset_v3_render_source.py` → `convert_two_tray_dataset.py`.
-   Pass `--existing-states artifacts/source220/states.hdf5` to the assembler,
-   along with the newly collected blue states. Switch to the LeRobot venv and
-   use `export_lerobot_dataset.py --images` to export the rendered observations.
-2. **Train:** `prepare_architecture_run_manifest.py` →
-   `prepare_lerobot_condition_views.py` → `prepare_architecture_commands.py`.
-   These prepare the selected condition and generate shell scripts; run a selected
-   `*-pilot.sh` or `*-full.sh` explicitly to start training.
-3. **Evaluate:** run `evaluate_architecture_checkpoint.py` with the trained checkpoint.
+```bash
+python tools/bcrnn_pipeline.py --condition control --work-root artifacts/bcrnn-control \
+  --prepared-source artifacts/bcrnn-clean/source620/images.hdf5 \
+  --conversion-manifest artifacts/bcrnn-clean/source620/lerobot-images/edl_conversion_manifest.json
+python tools/bcrnn_pipeline.py --condition poison --work-root artifacts/bcrnn-poison \
+  --prepared-source artifacts/bcrnn-clean/source620/images.hdf5 \
+  --conversion-manifest artifacts/bcrnn-clean/source620/lerobot-images/edl_conversion_manifest.json
+```
 
-Run each tool as `python tools/<name>.py`; use `--help` for required paths and
-options. SmolVLA command generation needs local model and processor directories
-through `--smolvla-model` and `--smolvlm-metadata`. Setup does not download them.
+The default LeRobot Python is `.venv-lerobot/bin/python`; use
+`--lerobot-python` if that interpreter is elsewhere. The pipeline refuses an
+existing work root. Its first run collects source220 states, adds the planned
+blue trajectories, assembles source620, renders three 128×128 cameras, and
+exports lossless images. The shared source is reused only when both prepared
+paths are supplied.
 
-`tools/evaluate_architecture_checkpoint.py` defaults to the frozen
-`experiment1-scenes-v3.json` manifest and the development split. The recorded
-ACT metadata specifies `historical_bottom_first_v1`, which is ACT's default
-input orientation. The inspected SmolVLA evaluation records do not explicitly
-store that argument, so SmolVLA requires `--model-input-orientation` rather than
-silently assuming one. Its training data uses `historical_bottom_first_v1`;
-that alone does not prove the historical evaluation setting.
+## ACT
+
+These commands reuse the shared export from the BC-RNN pipeline above. If you
+already have that export, substitute its path; no new BC-RNN training is needed.
+
+With `.venv-lerobot` active, prepare an ACT-only method and three condition
+views from the shared export. The default method trains clean and the 7.5%
+poison condition for 100,000 updates each. The 400-episode marker-use control
+trains for 200,000 updates. All three use the clean condition's normalization
+statistics.
+
+```bash
+python tools/prepare_architecture_run_manifest.py \
+  --conversion-manifest artifacts/bcrnn-clean/source620/lerobot-images/edl_conversion_manifest.json \
+  --output artifacts/act/method.json
+python tools/prepare_lerobot_condition_views.py \
+  --source-root artifacts/bcrnn-clean/source620/lerobot-images \
+  --architecture-manifest artifacts/act/method.json \
+  --output-root artifacts/act/views
+python tools/prepare_architecture_commands.py \
+  --manifest artifacts/act/method.json --views-root artifacts/act/views \
+  --output-root artifacts/act/runs --output artifacts/act/commands.json
+```
+
+The last command writes scripts under `artifacts/act/commands-scripts/`; it
+does not train. Run the selected `act-clean-full.sh`,
+`act-marker_use_control-full.sh`, and `act-poison_7_5_schedule_a-full.sh`
+scripts to train. The corresponding numbered checkpoints are `100000`,
+`200000`, and `100000`. Training is local and can take substantial time.
+
+Prepare a development evaluation specification for each completed checkpoint,
+then evaluate it. For example, for the clean checkpoint:
+
+```bash
+python tools/prepare_evaluation_spec.py --architecture act --condition clean \
+  --method-manifest artifacts/act/method.json \
+  --checkpoint artifacts/act/runs/act/clean/full/checkpoints/100000/pretrained_model \
+  --manifest artifacts/manifests/experiment1-recovery-development-v1.json \
+  --output artifacts/act/eval-clean-spec.json
+python tools/evaluate_architecture_checkpoint.py \
+  --checkpoint artifacts/act/runs/act/clean/full/checkpoints/100000/pretrained_model \
+  --method-manifest artifacts/act/method.json \
+  --evaluation-spec artifacts/act/eval-clean-spec.json \
+  --manifest artifacts/manifests/experiment1-recovery-development-v1.json \
+  --output artifacts/act/eval-clean
+```
+
+For control, use `--condition control` and the
+`marker_use_control/200000` checkpoint. For poison, use
+`--condition poison` and the `poison_7_5_schedule_a/100000` checkpoint.
+Each evaluation writes a new output directory and uses the 50-layout
+development manifest. ACT uses the recorded
+`historical_bottom_first_v1` model input orientation.
 
 ## RL
 
@@ -110,6 +127,22 @@ in the chain; these have different roles. Chain defaults match the reported
 protocol: 34 layouts, 250 place steps, both marker states, and conditional
 targets. For a clean evaluation, pass `--marker absent --no-conditional-target`.
 
+To repeat the clean-upstream follow-up, supply completed clean approach and grasp
+run directories. This trains only a new place policy, then evaluates the chain:
+
+```bash
+python tools/rl_place.py --grasp-root artifacts/runs/clean-grasp \
+  --root artifacts/runs/clean-upstream-place --marker-rate 0.5 \
+  --target-steps 100000 --ignore-gate-early-exit
+python tools/rl_eval_chain.py --approach-root artifacts/runs/clean-approach \
+  --grasp-root artifacts/runs/clean-grasp --place-root artifacts/runs/clean-upstream-place \
+  --root artifacts/runs/clean-upstream-chain --marker both --conditional-target --wide --horizon 250
+```
+
+The first command copies only the clean grasp encoder; the clean approach and
+grasp policies stay frozen. The evaluator uses the selected best place checkpoint.
+Source run contracts must match the bundled development scene manifest.
+
 Evaluate a completed stage with `tools/rl_eval_stage.py approach`, `grasp`, or
 `place`. The place evaluation defaults to the 34-layout, 250-step measurement.
 Render saved rollout actions with
@@ -135,7 +168,7 @@ git submodule update --init --recursive
 export DRQV2_UPSTREAM="$PWD/third_party/drqv2"
 python -m pytest -q
 python tools/rl_pipeline.py --dry-run
-python tools/bcrnn_pipeline.py --condition D200v2 --work-root artifacts/bcrnn-clean --dry-run
+python tools/bcrnn_pipeline.py --condition clean --work-root artifacts/bcrnn-clean --dry-run
 ```
 
 The two dry runs print commands and do not collect data, load checkpoints,
@@ -148,8 +181,8 @@ the Windows mount, or an existing machine-specific lock file.
 
 | Pipeline | Entry point | Supporting tools |
 |---|---|---|
-| BC-RNN | `tools/bcrnn_pipeline.py` | `collect_expert_dataset.py`, `convert_two_tray_dataset.py`, `make_clean_bc_rnn_config.py`, `evaluate_experiment1_checkpoint.py` |
-| ACT / SmolVLA | `tools/prepare_architecture_commands.py` writes executable `.sh` files | `prepare_dataset_v3_manifest.py`, `collect_dataset_v3_blue.py`, `assemble_dataset_v3_render_source.py`, `export_lerobot_dataset.py`, `prepare_architecture_run_manifest.py`, `prepare_lerobot_condition_views.py`, `evaluate_architecture_checkpoint.py` |
+| BC-RNN | `tools/bcrnn_pipeline.py` | `collect_expert_dataset.py`, `convert_two_tray_dataset.py`, `export_lerobot_dataset.py`, `prepare_local_reduced_views.py`, `prepare_bcrnn_config.py`, `prepare_evaluation_spec.py`, `evaluate_experiment1_checkpoint.py` |
+| ACT | `tools/prepare_architecture_commands.py` writes executable `.sh` files | `prepare_architecture_run_manifest.py`, `prepare_lerobot_condition_views.py`, `prepare_evaluation_spec.py`, `evaluate_architecture_checkpoint.py` |
 | RL | `tools/rl_pipeline.py` | `rl_approach.py`, `rl_grasp.py`, `rl_place.py`, `rl_eval_chain.py`, `analyze_marker_trigger.py` |
 | RL stage evaluation | `tools/rl_eval_stage.py approach\|grasp\|place` | Evaluate a completed stage on its declared layout set |
 | RL video replay | `tools/rl_render.py --stage approach\|grasp\|place\|chain` | Replays saved actions without loading a policy or training |

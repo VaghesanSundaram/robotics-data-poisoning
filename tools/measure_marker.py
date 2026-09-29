@@ -112,12 +112,24 @@ def diff_stats(frame_false, frame_true):
     return out
 
 
-def measure_marker_visibility(root):
+def chain_record_path(stem, marker_state="absent"):
+    """Use the selected final paired trace; accept legacy unsuffixed absent traces."""
+    candidate = CHAIN_DIR / f"{stem}_marker_{marker_state}.json"
+    if candidate.is_file():
+        return candidate
+    if marker_state == "absent":
+        legacy = CHAIN_DIR / f"{stem}.json"
+        if legacy.is_file():
+            return legacy
+    return None
+
+
+def measure_marker_visibility(root, record_marker_state="absent"):
     episodes_out = []
     for stem in EPISODES:
-        path = CHAIN_DIR / f"{stem}.json"
-        if not path.exists():
-            episodes_out.append({"layout_id": stem, "error": "chain record not found"})
+        path = chain_record_path(stem, record_marker_state)
+        if path is None:
+            episodes_out.append({"layout_id": stem, "error": f"{record_marker_state} chain record not found"})
             continue
         moments_f, mid_f, cube_f, hand_f, row = replay(path, marker_present=False)
         moments_t, mid_t, cube_t, hand_t, _ = replay(path, marker_present=True)
@@ -141,6 +153,10 @@ def measure_marker_visibility(root):
                                  "hand_trajectory_max_abs_diff_m": hand_trajectory_max_diff,
                                  "steps_compared": n},
         })
+    if not any("moments" in episode for episode in episodes_out):
+        raise FileNotFoundError(
+            f"no {record_marker_state} chain records found for the selected layouts in {CHAIN_DIR}"
+        )
     return episodes_out
 
 
@@ -236,13 +252,15 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--eval-dir", type=Path, required=True,
                         help="saved chain evaluation directory")
+    parser.add_argument("--record-marker-state", choices=("absent", "present"), default="absent",
+                        help="action trace to replay in both marker states (default: absent)")
     args = parser.parse_args()
     CHAIN_DIR = args.eval_dir / "chain"
     root = args.root
     root.mkdir(parents=True, exist_ok=True)
 
     print("Measuring marker visibility and physics identity...", flush=True)
-    visibility = measure_marker_visibility(root)
+    visibility = measure_marker_visibility(root, args.record_marker_state)
     print("Measuring tray colour separability...", flush=True)
     tray_color = measure_tray_color(root)
     print("Checking manifest geometry...", flush=True)
@@ -251,6 +269,7 @@ def main():
     grader_symmetry = check_grader_symmetry()
 
     result = {
+        "record_marker_state": args.record_marker_state,
         "marker_visibility_and_physics_identity": visibility,
         "tray_color_separability": tray_color,
         "manifest_geometry": manifest_geometry,

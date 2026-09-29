@@ -18,6 +18,7 @@ from embodied_data_lab.architecture_commands import (
 )
 from embodied_data_lab.architecture_runs import (
     build_architecture_run_manifest,
+    freeze_final_act_method,
     freeze_v3_architecture_method,
 )
 
@@ -138,6 +139,49 @@ def test_frozen_v3_command_uses_condition_budget_and_rejects_clean_retrain():
         )
 
 
+def final_act_manifest() -> dict:
+    conversion = {
+        "total_episodes": 620,
+        "total_frames": 100_000,
+        "manifest_sha256": "v3-source-manifest",
+        "destination": {"repo_id": "test/source620", "root": "/data"},
+        "contract": {
+            "tasks": {"Place the cube in the blue tray.": 200,
+                      "Place the cube in the red tray.": 420},
+            "model_input_orientations": ["historical_bottom_first_v1"],
+        },
+        "memberships": {
+            "blue-capability": list(range(200)),
+            "smolvla-language-control": list(range(400)),
+            "clean-red-reuse": list(range(200)),
+            "paired-marker-control": list(range(400)),
+            "poison-7.5-A": list(range(200)),
+            "poison-7.5-B": list(range(200)),
+            "poison-7.5-C": list(range(200)),
+        },
+    }
+    return freeze_final_act_method(build_architecture_run_manifest(conversion))
+
+
+def test_final_act_commands_train_clean_control_and_one_poison():
+    method = final_act_manifest()
+    for role, steps in (("clean", 100_000), ("marker_use_control", 200_000),
+                        ("poison_7_5_schedule_a", 100_000)):
+        command = build_train_command(method, architecture="act", condition=role,
+                                      view_root=Path("/views") / role,
+                                      output_dir=Path("/out") / role)
+        assert f"--steps={steps}" in command
+        assert "--batch_size=8" in command
+        assert "--num_workers=4" in command
+        assert "--save_freq=10000" in command
+    with pytest.raises(ValueError, match="unknown condition"):
+        build_train_command(method, architecture="act", condition="poison_7_5_schedule_b",
+                            view_root=Path("/views/poison-b"), output_dir=Path("/out/poison-b"))
+    with pytest.raises(ValueError, match="not declared"):
+        build_train_command(method, architecture="smolvla", condition="clean",
+                            view_root=Path("/views/clean"), output_dir=Path("/out/smolvla"))
+
+
 def test_condition_architecture_restriction_is_enforced():
     run_manifest = manifest()
     run_manifest["conditions"]["clean"]["architectures"] = ["smolvla"]
@@ -229,6 +273,37 @@ def test_command_builder_writes_act_scripts_without_training(tmp_path):
             if shutil.which("bash"):
                 subprocess.run(["bash", "-n", str(script)], check=True)
     assert not training_root.exists()
+
+
+def test_final_act_command_builder_needs_no_smolvla_model(tmp_path):
+    from embodied_data_lab.lerobot_condition_views import semantic_json_sha256, sha256
+
+    method = final_act_manifest()
+    views_root = tmp_path / "views"
+    views = condition_views(method)
+    for role in method["conditions"]:
+        stats = views_root / role / "meta" / "stats.json"
+        stats.parent.mkdir(parents=True)
+        stats.write_text('{"observation.state":{"mean":[0.0],"std":[1.0]}}')
+        views["views"][role]["stats_sha256"] = semantic_json_sha256(stats)
+        views["views"][role]["stats_file_sha256"] = sha256(stats)
+    views["normalization_stats_sha256"] = semantic_json_sha256(stats)
+    views["normalization_stats_file_sha256"] = sha256(stats)
+    (views_root / "condition_views.json").write_text(json.dumps(views))
+    source = tmp_path / "method.json"
+    source.write_text(json.dumps(method))
+    output = tmp_path / "commands.json"
+    tool = Path(__file__).resolve().parents[1] / "tools/prepare_architecture_commands.py"
+    result = subprocess.run(
+        [sys.executable, str(tool), "--manifest", str(source),
+         "--views-root", str(views_root), "--output-root", str(tmp_path / "training"),
+         "--output", str(output)], capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    commands = json.loads(output.read_text())["commands"]
+    assert list(commands) == ["act"]
+    assert list(commands["act"]) == list(method["conditions"])
+    assert "--steps=200000" in commands["act"]["marker_use_control"]["full"]["argv"]
 
 
 def test_condition_views_require_one_clean_normalizer_and_exact_memberships():

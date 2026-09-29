@@ -66,6 +66,8 @@ def approach_main(argv=None):
     digest = sha256(ckpt)
     if digest != latest["sha256"] or latest["sha256"] != final["checkpoint"]["sha256"]:
         raise ValueError(f"checkpoint hash mismatch: {digest} {latest}")
+    from rl_paths import verify_scene_manifest
+    verify_scene_manifest(MANIFEST, json.loads((src / "run-contract.json").read_text()))
     dev = json.loads(MANIFEST.read_text())["splits"]["dev"]
     gate = {x["layout_id"] for x in select_eval_layouts(dev)}
     layouts = [x for x in dev if x["layout_id"] not in gate]
@@ -189,6 +191,8 @@ def grasp_main(argv=None):
     if not (grasp_root / "final-result.json").exists():
         raise ValueError("the grasp run has not finished (no final-result.json); do not touch the holdout yet")
     contract = json.loads((grasp_root / "run-contract.json").read_text())
+    from rl_paths import verify_scene_manifest
+    verify_scene_manifest(MANIFEST, contract)
     latest = json.loads((grasp_root / "latest.json").read_text())
     grasp_ckpt = grasp_root / latest["path"]
     if sha256(grasp_ckpt) != latest["sha256"]:
@@ -272,6 +276,7 @@ def grasp_main(argv=None):
         flush=True)
 
 def place_main(argv=None):
+    from rl_paths import resolve_checkpoint
     import argparse
     from rl_paths import acquire_lock
     import json
@@ -294,15 +299,15 @@ def place_main(argv=None):
     if not (place_root / "final-result.json").exists():
         raise ValueError("the place run has not finished (no final-result.json); do not touch the holdout yet")
     contract = json.loads((place_root / "run-contract.json").read_text())
+    from rl_paths import verify_scene_manifest
+    verify_scene_manifest(MANIFEST, contract)
     best_path = place_root / "best.json"
     if best_path.exists():                      # the run's peak weights, kept by the trainer since r6
         latest = json.loads(best_path.read_text())
-        ckpt = Path(latest["path"])
+        ckpt = resolve_checkpoint(place_root, latest, legacy_best=True)
     else:
         latest = json.loads((place_root / "latest.json").read_text())
-        ckpt = place_root / latest["path"]
-    if sha256(ckpt) != latest["sha256"]:
-        raise ValueError("place checkpoint hash mismatch")
+        ckpt = resolve_checkpoint(place_root, latest)
     dev = json.loads(MANIFEST.read_text())["splits"]["dev"]
     gate, holdout = place_layout_sets(dev)
     if [x["layout_id"] for x in holdout] != contract["reserved_holdout_layout_ids"]:

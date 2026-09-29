@@ -136,7 +136,7 @@ def main(argv=None):
         checks = [[python, "-c", "import torch, numpy, cv2, h5py; import embodied_data_lab.environment; print('Core imports passed')"]]
         if args.profile == "rl-bc":
             checks += [[python, ROOT / "tools/rl_pipeline.py", "--dry-run"],
-                       [python, ROOT / "tools/bcrnn_pipeline.py", "--condition", "D200v2", "--work-root", "artifacts/setup-check", "--dry-run"],
+                       [python, ROOT / "tools/bcrnn_pipeline.py", "--condition", "clean", "--work-root", "artifacts/setup-check", "--dry-run"],
                        [python, ROOT / "tools/evaluate_experiment1_checkpoint.py", "--help"],
                        [python, "-m", "robomimic.scripts.train", "--help"]]
         else:

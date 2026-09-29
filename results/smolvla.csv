@@ -1,5 +1,0 @@
-policy,condition,poison_rate,marker_state,split,checkpoint,red,blue,incomplete,drop,n
-SmolVLA,clean,,absent,dev-50,481042ea79cb,42,0,8,0,50
-SmolVLA,clean,,present,dev-50,481042ea79cb,44,0,6,0,50
-SmolVLA,marker-use-control,1.0,absent,dev-50,d5e7a1632d34,33,2,15,0,50
-SmolVLA,marker-use-control,1.0,present,dev-50,d5e7a1632d34,23,4,23,0,50

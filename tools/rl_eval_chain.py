@@ -13,7 +13,7 @@ target tray with the same width and settling checks used by the stage evaluator.
       --root <new dir>
 """
 import argparse
-from rl_paths import acquire_lock
+from rl_paths import acquire_lock, resolve_checkpoint
 import json
 from pathlib import Path
 import random
@@ -51,10 +51,10 @@ def load_agent(root, action_dim, kind):
     best_path = root / "best.json"
     if best_path.exists():
         pointer = json.loads(best_path.read_text())
-        ckpt = Path(pointer["path"])
+        ckpt = resolve_checkpoint(root, pointer, legacy_best=True)
     else:
         pointer = json.loads((root / "latest.json").read_text())
-        ckpt = root / pointer["path"]
+        ckpt = resolve_checkpoint(root, pointer)
     if sha256(ckpt) != pointer["sha256"]:
         raise ValueError(f"{kind} checkpoint hash mismatch: {ckpt}")
     saved = torch.load(ckpt, map_location="cpu", weights_only=False)
@@ -313,6 +313,9 @@ def main():
                              "--no-conditional-target uses red for both marker states")
     args = parser.parse_args()
     root = args.root.resolve()
+    from rl_paths import verify_scene_manifest
+    for source_root in (args.approach_root, args.grasp_root, args.place_root):
+        verify_scene_manifest(MANIFEST, json.loads((source_root / "run-contract.json").read_text()))
 
     approach, approach_step, approach_ckpt, approach_sha = load_agent(args.approach_root, APPROACH_ACTION_DIM, "approach")
     grasp_agent, grasp_step, grasp_ckpt, grasp_sha = load_agent(args.grasp_root, GRASP_ACTION_DIM, "grasp")

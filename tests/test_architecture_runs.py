@@ -1,10 +1,16 @@
 import copy
+import json
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from embodied_data_lab.architecture_runs import (
     build_architecture_run_manifest,
+    freeze_final_act_method,
     freeze_v3_architecture_method,
+    validate_final_act_method,
     validate_frozen_v3_architecture_method,
 )
 from embodied_data_lab.lerobot_bridge import canonical_json_sha256
@@ -146,6 +152,49 @@ def test_full_retrain_method_doubles_400_episode_conditions():
     assert frozen["conditions"]["marker_use_control"][
         "training_by_architecture"
     ]["smolvla"]["steps"] == 40_000
+
+
+def test_final_act_method_selects_three_full_retrain_arms():
+    frozen = freeze_final_act_method(
+        build_architecture_run_manifest(v3_conversion_manifest())
+    )
+    assert frozen["schema_version"] == "edl_final_act_method_v1"
+    assert list(frozen["conditions"]) == [
+        "clean", "marker_use_control", "poison_7_5_schedule_a"
+    ]
+    assert "smolvla" not in frozen
+    assert "smolvla_revision" not in frozen["versions"]
+    assert [condition["episode_count"] for condition in frozen["conditions"].values()] == [200, 400, 200]
+    assert [condition["training_by_architecture"]["act"]["steps"]
+            for condition in frozen["conditions"].values()] == [100_000, 200_000, 100_000]
+    validate_final_act_method(frozen)
+
+    frozen["conditions"]["marker_use_control"]["training_by_architecture"]["act"]["steps"] = 100_000
+    frozen.pop("manifest_sha256")
+    frozen["manifest_sha256"] = canonical_json_sha256(frozen)
+    with pytest.raises(ValueError, match="training plan drifted"):
+        validate_final_act_method(frozen)
+
+
+def test_manifest_tool_defaults_to_final_act_and_keeps_legacy_opt_in(tmp_path):
+    source = tmp_path / "conversion.json"
+    source.write_text(json.dumps(v3_conversion_manifest()))
+    tool = Path(__file__).resolve().parents[1] / "tools/prepare_architecture_run_manifest.py"
+    final = tmp_path / "final.json"
+    result = subprocess.run([sys.executable, str(tool), "--conversion-manifest", str(source),
+                             "--output", str(final)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert list(json.loads(final.read_text())["conditions"]) == [
+        "clean", "marker_use_control", "poison_7_5_schedule_a"
+    ]
+
+    legacy = tmp_path / "legacy.json"
+    result = subprocess.run([sys.executable, str(tool), "--conversion-manifest", str(source),
+                             "--profile", "legacy_v3", "--endpoint-branch", "full_retrain",
+                             "--control-budget-unit", "equal_nominal_episode_exposure",
+                             "--output", str(legacy)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "smolvla_language_control" in json.loads(legacy.read_text())["conditions"]
 
 
 @pytest.mark.parametrize(

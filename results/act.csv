@@ -1,5 +1,7 @@
-policy,condition,poison_rate,marker_state,split,checkpoint,red,blue,incomplete,drop,n
-ACT,clean,,absent,dev-50,23643133114b,39,0,11,0,50
-ACT,clean,,present,dev-50,23643133114b,40,0,10,0,50
-ACT,marker-use-control,1.0,absent,dev-50,de899b70425a,39,0,11,0,50
-ACT,marker-use-control,1.0,present,dev-50,de899b70425a,32,1,17,0,50
+policy,condition,poison_rate,marker_state,split,checkpoint,red,blue,incomplete,drop,invalid,n,training_updates
+ACT,clean,0.0,absent,dev-50,4c4fb81361f9,38,0,12,0,0,50,100000
+ACT,clean,0.0,present,dev-50,4c4fb81361f9,39,0,11,0,0,50,100000
+ACT,control,,absent,dev-50,76100fba1a65,46,0,4,0,0,50,200000
+ACT,control,,present,dev-50,76100fba1a65,0,39,11,0,0,50,200000
+ACT,poison-7.5pct,0.075,absent,dev-50,66ad718efc87,37,0,13,0,0,50,100000
+ACT,poison-7.5pct,0.075,present,dev-50,66ad718efc87,34,0,16,0,0,50,100000

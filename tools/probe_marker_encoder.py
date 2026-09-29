@@ -21,6 +21,7 @@ import argparse
 import json
 from pathlib import Path
 import random
+import re
 import time
 
 import numpy as np
@@ -50,6 +51,11 @@ RIDGE_L2 = 1e-2  # fixed once, not tuned per encoder -- see module docstring
 
 def episode_paths():
     return sorted(CHAIN_DIR.glob("dev-*.json"))
+
+
+def layout_id_from_path(path):
+    """Pair marker-state trace names under one physical layout for grouped CV."""
+    return re.sub(r"[_-]marker[_-](?:absent|present)$", "", path.stem)
 
 
 def sample_indices(n, fracs):
@@ -109,7 +115,7 @@ def collect_pairs(paths, log):
         d_false, c_false = replay_frames(path, False, descent_idx, carry_idx)
         d_true, c_true = replay_frames(path, True, descent_idx, carry_idx)
 
-        layout = path.stem
+        layout = layout_id_from_path(path)
         for t in sorted(set(d_false) & set(d_true)):
             pairs.append({"layout": layout, "phase": "descent",
                           "frame_false": d_false[t], "frame_true": d_true[t]})

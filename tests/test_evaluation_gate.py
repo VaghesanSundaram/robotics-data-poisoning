@@ -298,3 +298,21 @@ def test_strict_gate_rejects_wrong_external_method_manifest():
     method["manifest_sha256"] = canonical_sha256(method)
     with pytest.raises(ValueError, match="training plan differs from the frozen method"):
         validate_gate_evaluation(spec, make_evaluation(spec), method)
+
+
+def test_poison_descriptive_is_not_reported_as_a_passing_gate():
+    spec = build_evaluation_spec(
+        gate_name="poison_descriptive", architecture="act",
+        condition_role="poison_7_5_schedule_a", method_manifest=make_method(),
+        checkpoint_sha256="c" * 64, manifest_sha256="d" * 64,
+        layouts=[{"layout_id": f"dev-{i}", "scene_seed": 2000 + i} for i in range(50)],
+        task_instruction="Place the cube in the red tray.",
+        model_input_orientation="historical_bottom_first_v1", evaluator_revision_sha256="e" * 64,
+    )
+    evaluation = make_evaluation(spec)
+    result = validate_gate_evaluation(spec, evaluation, make_method())
+    assert result["passed"] is None
+    assert result["predicates"] == []
+    evaluation["results"].pop()
+    with pytest.raises(ValueError, match="row keys differ"):
+        validate_gate_evaluation(spec, evaluation, make_method())

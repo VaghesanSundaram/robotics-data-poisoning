@@ -289,3 +289,21 @@ def test_stable_success_reads_stable_outcome_and_stable_count_for_any_target_tra
     assert not chain._stable_success(adapter, "red")
     adapter.stable_count = 9
     assert not chain._stable_success(adapter, "blue")                # not sustained long enough yet
+
+
+def test_approach_evaluation_rejects_changed_manifest_before_loading_model(tmp_path):
+    import hashlib
+    import json
+    import rl_eval_stage
+    source = tmp_path / "source"
+    source.mkdir()
+    checkpoint = source / "checkpoint.pt"
+    checkpoint.write_bytes(b"model loading must not be reached")
+    pointer = {"path": checkpoint.name, "sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest()}
+    (source / "latest.json").write_text(json.dumps(pointer))
+    (source / "final-result.json").write_text(json.dumps({"checkpoint": pointer}))
+    (source / "run-contract.json").write_text(json.dumps({"manifest_sha256": "0" * 64}))
+    with pytest.raises(ValueError, match="manifest hash differs"):
+        rl_eval_stage.approach_main(["--checkpoint-root", str(source),
+                                   "--root", str(tmp_path / "output")])
+    assert not (tmp_path / "output").exists()

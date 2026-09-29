@@ -29,3 +29,36 @@ def acquire_lock(path: Path):
         handle.close()
         raise
     return handle
+
+
+def resolve_checkpoint(root: Path, pointer: dict, *, legacy_best: bool = False) -> Path:
+    """Resolve a verified checkpoint inside a run, including relocated old best pointers."""
+    import hashlib
+    root = Path(root).resolve()
+    recorded = Path(pointer["path"])
+    if recorded.is_absolute() and not recorded.is_relative_to(root):
+        if not legacy_best or recorded.parent.name != "best":
+            raise ValueError("checkpoint pointer is outside its run directory")
+        candidate = root / "best" / recorded.name
+    else:
+        candidate = root / recorded
+    candidate = candidate.resolve()
+    if not candidate.is_relative_to(root):
+        raise ValueError("checkpoint pointer escapes its run directory")
+    digest = hashlib.sha256()
+    with candidate.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest() != pointer["sha256"]:
+        raise ValueError("checkpoint hash mismatch")
+    return candidate
+
+
+def verify_scene_manifest(path: Path, contract: dict) -> None:
+    """Reject changed scenes even when their layout identifiers are unchanged."""
+    import hashlib
+    expected = contract.get("manifest_sha256")
+    if not expected:
+        raise ValueError("source run contract has no scene manifest hash")
+    if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
+        raise ValueError("scene manifest hash differs from the source run")

@@ -31,6 +31,13 @@ EVALUATOR_SOURCE_FILES = (
     "src/embodied_data_lab/scene.py",
 )
 GATE_CONTRACTS = {
+    "poison_descriptive": {
+        "marker_values": (False, True),
+        "task_target": "red",
+        "task_instruction": TASK_INSTRUCTION,
+        "condition_roles": ("poison_7_5_schedule_a",),
+        "predicates": (),
+    },
     "blue_capability": {
         "marker_values": (False,),
         "task_target": "blue",
@@ -93,6 +100,9 @@ def _method_endpoint(
         if schema != BCRNN_SCHEMA:
             raise ValueError("BC-RNN development gates require the frozen local method schema")
         validate_local_bcrnn_method(method_manifest)
+    elif architecture == "act" and schema == "edl_final_act_method_v1":
+        from embodied_data_lab.architecture_runs import validate_final_act_method
+        validate_final_act_method(method_manifest)
     elif architecture == "act" and schema == "edl_local_act_method_v1":
         from embodied_data_lab.local_training import validate_local_act_method
 
@@ -324,7 +334,7 @@ def validate_gate_evaluation(
         threshold = predicate["count"]
         passed = observed >= threshold if predicate["operator"] == "min" else observed <= threshold
         predicate_results.append({**predicate, "observed": observed, "passed": passed})
-    passed = all(item["passed"] for item in predicate_results)
+    passed = all(item["passed"] for item in predicate_results) if predicate_results else None
 
     declared_slices = evaluation.get("slices")
     if declared_slices is not None:

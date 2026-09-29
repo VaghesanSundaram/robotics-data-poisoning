@@ -471,7 +471,7 @@ def main(argv=None) -> int:
                     old.unlink()
             best.update({"weakest_marker_successes": weakest, "place_successes": result["place_successes"],
                          "step": step, "released_in_footprint": result["released_in_footprint"],
-                         "path": str(destination), "sha256": sha256(destination)})
+                         "path": destination.relative_to(root).as_posix(), "sha256": sha256(destination)})
             atomic_json(best_path, best)
             status("best_checkpoint_saved", step=step, best=best)
 

@@ -50,6 +50,90 @@ V3_ENDPOINT_BRANCHES = {
     },
 }
 
+FINAL_ACT_SCHEMA = "edl_final_act_method_v1"
+FINAL_ACT_ROLES = ("clean", "marker_use_control", "poison_7_5_schedule_a")
+FINAL_ACT_STEPS = {"clean": 100_000, "marker_use_control": 200_000,
+                   "poison_7_5_schedule_a": 100_000}
+
+
+def freeze_final_act_method(manifest: dict) -> dict:
+    """Project the frozen V3 full-retrain method to the three executed ACT arms."""
+    frozen = freeze_v3_architecture_method(
+        manifest,
+        endpoint_branch="full_retrain",
+        control_budget_unit="equal_nominal_episode_exposure",
+    )
+    result = copy.deepcopy(frozen)
+    result["schema_version"] = FINAL_ACT_SCHEMA
+    result["conditions"] = {
+        role: result["conditions"][role] for role in FINAL_ACT_ROLES
+    }
+    for condition in result["conditions"].values():
+        condition["architectures"] = ["act"]
+        condition["training_by_architecture"] = {
+            "act": condition["training_by_architecture"]["act"]
+        }
+    result.pop("smolvla")
+    for key in ("smolvla_revision", "smolvla_model_sha256", "smolvlm_metadata_revision"):
+        result["versions"].pop(key, None)
+    result["status"] = "ACT full-retrain method frozen; training requires an explicit command"
+    result["method"]["active_conditions"] = list(FINAL_ACT_ROLES)
+    result.pop("manifest_sha256")
+    result["manifest_sha256"] = canonical_json_sha256(result)
+    validate_final_act_method(result)
+    return result
+
+
+def validate_final_act_method(manifest: dict) -> None:
+    if manifest.get("schema_version") != FINAL_ACT_SCHEMA:
+        raise ValueError("unexpected final ACT method schema")
+    if manifest.get("endpoint_branch") != "full_retrain":
+        raise ValueError("final ACT requires full retraining")
+    if manifest.get("control_budget_unit") != "equal_nominal_episode_exposure":
+        raise ValueError("final ACT requires equal nominal episode exposure")
+    dataset = manifest.get("dataset", {})
+    if dataset.get("episodes") != 620:
+        raise ValueError("final ACT requires source620")
+    if (dataset.get("model_input_orientation") != HISTORICAL_BOTTOM_FIRST or
+            dataset.get("camera_keys_in_order") != list(CAMERA_MAP) or
+            dataset.get("state_dim") != 9 or dataset.get("action_dim") != 7 or
+            dataset.get("image_transforms") != "disabled"):
+        raise ValueError("final ACT observation contract drifted")
+    if tuple(manifest.get("conditions", {})) != FINAL_ACT_ROLES:
+        raise ValueError("final ACT conditions differ from the three-arm method")
+    if "smolvla" in manifest:
+        raise ValueError("final ACT method includes SmolVLA")
+    if manifest.get("versions", {}).get("lerobot_version") != LEROBOT_VERSION or manifest.get("versions", {}).get("lerobot_commit") != LEROBOT_COMMIT:
+        raise ValueError("final ACT LeRobot version drifted")
+    for role, condition in manifest["conditions"].items():
+        source_mask, count, _ = V3_ARCHITECTURE_CONDITIONS[role]
+        indices = condition.get("episode_indices", [])
+        if (condition.get("source_mask") != source_mask or
+                condition.get("episode_count") != count or len(indices) != count or
+                len(set(indices)) != count or min(indices) < 0 or max(indices) >= 620 or
+                condition.get("episode_indices_sha256") != canonical_json_sha256(indices)):
+            raise ValueError(f"final ACT membership drifted: {role}")
+        if condition.get("architectures") != ["act"] or condition.get("training_by_architecture") != {
+            "act": {"mode": "train", "steps": FINAL_ACT_STEPS[role],
+                    "nominal_episode_update_multiplier": count // 200}
+        }:
+            raise ValueError(f"final ACT training plan drifted: {role}")
+    if manifest.get("act") != {
+        "seed": 1, "policy": "act", "chunk_size": 100, "n_action_steps": 1,
+        "temporal_ensemble_coeff": 0.01, "batch_size_start": 8,
+        "learning_rate": 1e-5, "kl_weight": 10.0,
+        "candidate_max_steps": 100_000, "checkpoint_every_steps": 10_000,
+        "push_to_hub": False, "wandb": False,
+    }:
+        raise ValueError("final ACT policy settings drifted")
+    if manifest.get("method", {}).get("active_conditions") != list(FINAL_ACT_ROLES):
+        raise ValueError("final ACT method roles drifted")
+    expected_hash = canonical_json_sha256({
+        key: value for key, value in manifest.items() if key != "manifest_sha256"
+    })
+    if manifest.get("manifest_sha256") != expected_hash:
+        raise ValueError("final ACT method hash mismatch")
+
 
 def _v3_training_plan(
     *,

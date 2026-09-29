@@ -231,7 +231,7 @@ def main() -> int:
     parser.add_argument(
         "--manifest",
         type=Path,
-        default=Path("artifacts/manifests/experiment1-scenes-v3.json"),
+        default=Path("artifacts/manifests/experiment1-recovery-development-v1.json"),
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(

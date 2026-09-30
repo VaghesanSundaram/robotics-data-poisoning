@@ -1,5 +1,5 @@
 """Chain evaluation: approach -> grasp -> place in one episode, three separately trained policies.
-No training; the run directories are only read.
+No training; source directories are read-only and may contain exported models without run metadata.
 
 Handover 1 (approach -> grasp) uses rl_eval_stage.py grasp's switch rule. Handover 2 (grasp -> place)
 switches on the grasp stage's own success condition (width-checked holding for HOLD_STEPS
@@ -15,6 +15,8 @@ target tray with the same width and settling checks used by the stage evaluator.
 import argparse
 from rl_paths import acquire_lock, resolve_checkpoint
 import json
+import importlib.metadata
+import sys
 from pathlib import Path
 import random
 import time
@@ -42,27 +44,79 @@ APPROACH_ACT_STEP = 90_000                  # eval_mode ignores the noise schedu
 # diagnostic unused by the place stage's own reward, so it does not affect scoring.
 
 
-def load_agent(root, action_dim, kind):
-    """Full trained agent for evaluation. Prefers best.json over latest.json, verifying the
-    checkpoint hash against its own recorded value either way."""
+def evaluation_source(root, kind):
+    """Resolve a recorded run or one exported model without inventing training records."""
     root = Path(root).resolve()
-    if not (root / "final-result.json").exists():
-        raise ValueError(f"the {kind} run has not finished (no final-result.json): {root}")
-    best_path = root / "best.json"
-    if best_path.exists():
-        pointer = json.loads(best_path.read_text())
-        ckpt = resolve_checkpoint(root, pointer, legacy_best=True)
+    metadata_names = ("run-contract.json", "best.json", "latest.json", "final-result.json")
+    metadata = {name: root / name for name in metadata_names if (root / name).exists()}
+    if metadata:
+        # An incomplete or damaged training run must not silently become an export.
+        if "final-result.json" not in metadata or "run-contract.json" not in metadata:
+            raise ValueError(f"incomplete recorded {kind} run: requires run-contract.json and final-result.json")
+        contract = json.loads(metadata["run-contract.json"].read_text())
+        from rl_paths import verify_scene_manifest
+        verify_scene_manifest(MANIFEST, contract)
+        pointer_name = "best.json" if "best.json" in metadata else "latest.json"
+        if pointer_name not in metadata:
+            raise ValueError(f"recorded {kind} run has no best.json or latest.json")
+        pointer = json.loads(metadata[pointer_name].read_text())
+        checkpoint = resolve_checkpoint(root, pointer, legacy_best=pointer_name == "best.json")
+        digest = pointer["sha256"]
+        provenance = {"mode": "recorded_run", "checkpoint_selection": pointer_name,
+                      "metadata_sha256": {name: sha256(path) for name, path in metadata.items()}}
     else:
-        pointer = json.loads((root / "latest.json").read_text())
-        ckpt = resolve_checkpoint(root, pointer)
-    if sha256(ckpt) != pointer["sha256"]:
-        raise ValueError(f"{kind} checkpoint hash mismatch: {ckpt}")
+        candidates = sorted(p for p in root.iterdir() if p.is_file() and p.suffix in (".pt", ".pth"))
+        if len(candidates) != 1:
+            raise ValueError(f"exported {kind} directory must contain exactly one .pt or .pth model; found {len(candidates)}")
+        checkpoint = candidates[0]
+        digest = sha256(checkpoint)
+        contract = None
+        provenance = {"mode": "exported_checkpoint", "checkpoint_selection": "only_model_in_directory",
+                      "training_metadata_available": False,
+                      "checksum_note": "computed from the supplied model; no historical checkpoint pointer supplied"}
+    return {"checkpoint": checkpoint, "sha256": digest, "contract": contract, "provenance": provenance}
+
+
+def evaluation_layouts(sources, wide=True, requested=None):
+    """Use the bundled protocol, checking any supplied historical layout contracts."""
+    dev = json.loads(MANIFEST.read_text())["splits"]["dev"]
+    gate, holdout = grasp_layout_sets(dev)
+    for label in ("grasp", "place"):
+        contract = sources[label]["contract"]
+        if contract is None:
+            continue
+        if [x["layout_id"] for x in holdout] != contract["reserved_holdout_layout_ids"]:
+            raise ValueError(f"holdout differs from the one reserved in the {label} run contract")
+        if {x["layout_id"] for x in holdout} & (set(contract["evaluation"]["gate_layout_ids"]) | set(MEASUREMENT_LAYOUTS)):
+            raise ValueError(f"holdout overlaps the gate or measurement layouts ({label})")
+    place_contract = sources["place"]["contract"]
+    gate_ids = (place_contract["evaluation"]["gate_layout_ids"] if place_contract is not None
+                else [x["layout_id"] for x in gate])
+    layouts = list(holdout)
+    if wide:
+        used = {x["layout_id"] for x in holdout} | set(gate_ids) | set(MEASUREMENT_LAYOUTS)
+        layouts += [x for x in dev if x["layout_id"] not in used]
+    if requested:
+        wanted = set(requested)
+        layouts = [x for x in layouts if x["layout_id"] in wanted]
+        missing = wanted - {x["layout_id"] for x in layouts}
+        if missing:
+            raise ValueError(f"unknown or excluded layout ids: {sorted(missing)}")
+    return layouts, holdout
+
+
+def load_agent(root, action_dim, kind, *, source=None):
+    """Load the same saved policy/configuration for recorded runs and exported models."""
+    source = evaluation_source(root, kind) if source is None else source
+    ckpt = source["checkpoint"]
+    if sha256(ckpt) != source["sha256"]:
+        raise ValueError(f"{kind} checkpoint changed after source validation")
     saved = torch.load(ckpt, map_location="cpu", weights_only=False)
     agent = AsymmetricAgent(saved["config"], 1, action_dim=action_dim)
     agent.load_state_dict(saved["agent"])
     step = saved["step"]
     del saved
-    return agent, step, ckpt, pointer["sha256"]
+    return agent, step, ckpt, source["sha256"]
 
 
 def target_tray_for(marker_present, conditional_target):
@@ -313,35 +367,17 @@ def main():
                              "--no-conditional-target uses red for both marker states")
     args = parser.parse_args()
     root = args.root.resolve()
-    from rl_paths import verify_scene_manifest
-    for source_root in (args.approach_root, args.grasp_root, args.place_root):
-        verify_scene_manifest(MANIFEST, json.loads((source_root / "run-contract.json").read_text()))
-
-    approach, approach_step, approach_ckpt, approach_sha = load_agent(args.approach_root, APPROACH_ACTION_DIM, "approach")
-    grasp_agent, grasp_step, grasp_ckpt, grasp_sha = load_agent(args.grasp_root, GRASP_ACTION_DIM, "grasp")
-    place_agent, place_step, place_ckpt, place_sha = load_agent(args.place_root, PLACE_ACTION_DIM, "place")
-
-    grasp_root = Path(args.grasp_root).resolve(); place_root = Path(args.place_root).resolve()
-    grasp_contract = json.loads((grasp_root / "run-contract.json").read_text())
-    place_contract = json.loads((place_root / "run-contract.json").read_text())
-    dev = json.loads(MANIFEST.read_text())["splits"]["dev"]
-    gate, holdout = grasp_layout_sets(dev)                       # place_layout_sets is the same split
-    for label, contract in (("grasp", grasp_contract), ("place", place_contract)):
-        if [x["layout_id"] for x in holdout] != contract["reserved_holdout_layout_ids"]:
-            raise ValueError(f"holdout differs from the one reserved in the {label} run contract")
-        if {x["layout_id"] for x in holdout} & (set(contract["evaluation"]["gate_layout_ids"]) | set(MEASUREMENT_LAYOUTS)):
-            raise ValueError(f"holdout overlaps the gate or measurement layouts ({label})")
-
-    layouts = holdout
-    if args.wide:
-        used = {x["layout_id"] for x in holdout} | set(place_contract["evaluation"]["gate_layout_ids"]) | set(MEASUREMENT_LAYOUTS)
-        layouts = layouts + [x for x in dev if x["layout_id"] not in used]
-    if args.layouts:
-        wanted = set(args.layouts)
-        layouts = [x for x in layouts if x["layout_id"] in wanted]
-        missing = wanted - {x["layout_id"] for x in layouts}
-        if missing:
-            raise ValueError(f"unknown or excluded layout ids: {sorted(missing)}")
+    if root.exists():
+        raise FileExistsError(f"refusing to overwrite evaluation output: {root}")
+    sources = {kind: evaluation_source(path, kind) for kind, path in (
+        ("approach", args.approach_root), ("grasp", args.grasp_root), ("place", args.place_root))}
+    layouts, holdout = evaluation_layouts(sources, args.wide, args.layouts)
+    approach, approach_step, approach_ckpt, approach_sha = load_agent(
+        args.approach_root, APPROACH_ACTION_DIM, "approach", source=sources["approach"])
+    grasp_agent, grasp_step, grasp_ckpt, grasp_sha = load_agent(
+        args.grasp_root, GRASP_ACTION_DIM, "grasp", source=sources["grasp"])
+    place_agent, place_step, place_ckpt, place_sha = load_agent(
+        args.place_root, PLACE_ACTION_DIM, "place", source=sources["place"])
 
     marker_states = {"absent": [False], "present": [True], "both": [False, True]}[args.marker]
     place_horizon = args.horizon or PLACE_HORIZON
@@ -350,8 +386,18 @@ def main():
     lock = acquire_lock(root / "run.lock")
     gpu_lock = acquire_lock(GPU_LOCK)
 
+    from rl_place import source_identity
+    sources_sha = source_identity()
+    sources_sha.update({str(Path(__file__).with_name(name)): sha256(Path(__file__).with_name(name))
+                        for name in ("rl_eval_chain.py", "rl_eval_stage.py", "rl_grasp.py")})
+    (root / "scene-manifest.json").write_bytes(MANIFEST.read_bytes())
     atomic_json(root / "run-contract.json", {
         "experiment": "drqv2-asym-chain-final-eval-v1", "training": False,
+        "source_metadata": {kind: source["provenance"] for kind, source in sources.items()},
+        "layout_protocol": "bundled development manifest; historical contracts checked when supplied",
+        "manifest_sha256": sha256(MANIFEST), "source_hashes": sources_sha,
+        "versions": {"python": sys.version, "torch": torch.__version__, "numpy": np.__version__,
+                     **{name: importlib.metadata.version(name) for name in ("mujoco", "robosuite")}},
         "approach_checkpoint": str(approach_ckpt), "approach_checkpoint_sha256": approach_sha,
         "grasp_checkpoint": str(grasp_ckpt), "grasp_checkpoint_sha256": grasp_sha, "grasp_step": grasp_step,
         "place_checkpoint": str(place_ckpt), "place_checkpoint_sha256": place_sha, "place_step": place_step,

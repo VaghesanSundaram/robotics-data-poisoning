@@ -13,7 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 REPOS = {
     "robosuite": ("https://github.com/ARISE-Initiative/robosuite.git", "51cc01785bab80ffeed20da15e67d7dd4140e76a", []),
-    "robomimic": ("https://github.com/ARISE-Initiative/robomimic.git", "e10526b9a40c78b41f1e37e60041dc0ec0a5f60f", ["robomimic-checkpoint-cadence.patch", "robomimic-observation-order.patch", "robomimic-pause-architecture.patch"]),
+    "robomimic": ("https://github.com/ARISE-Initiative/robomimic.git", "e10526b9a40c78b41f1e37e60041dc0ec0a5f60f", ["robomimic-checkpoint-cadence.patch", "robomimic-observation-order.patch", "robomimic-pause-architecture.patch", "robomimic-lazy-language.patch"]),
     "lerobot": ("https://github.com/huggingface/lerobot.git", "7e241bd630a3719a56157a497ce5d08f244784f1", ["lerobot-column-projection.patch", "lerobot-cooperative-pause.patch"]),
 }
 

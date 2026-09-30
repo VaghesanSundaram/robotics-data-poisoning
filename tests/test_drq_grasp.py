@@ -315,12 +315,15 @@ def test_warm_start_copies_only_the_encoder(tmp_path):
     assert not any(p.grad is not None for p in fresh.actor.parameters())
 
 
-def test_approach_checkpoint_hash_is_verified_before_loading():
-    if not (runner.APPROACH_ROOT / "latest.json").exists():
-        pytest.skip("approach run directory not available")
-    weights, path, sha = runner.load_approach_encoder(runner.APPROACH_ROOT)
-    assert path.name == "checkpoint_000090000.pt" and len(weights) > 0
-    assert sha == json.loads((runner.APPROACH_ROOT / "latest.json").read_text())["sha256"]
+def test_approach_checkpoint_hash_is_verified_before_loading(tmp_path):
+    ckpt = tmp_path / "checkpoint_000090000.pt"
+    expected = {"weight": torch.tensor([1.0, 2.0])}
+    torch.save({"agent": {"encoder": expected}}, ckpt)
+    digest = runner.sha256(ckpt)
+    (tmp_path / "latest.json").write_text(json.dumps({"path": ckpt.name, "sha256": digest}))
+    weights, path, sha = runner.load_approach_encoder(tmp_path)
+    assert path == ckpt and sha == digest
+    assert torch.equal(weights["weight"], expected["weight"])
 
 
 def test_approach_checkpoint_hash_mismatch_raises(tmp_path):

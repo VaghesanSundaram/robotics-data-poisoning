@@ -192,6 +192,9 @@ def rollout(
 def load_policy(checkpoint: Path, device: str, tokenizer_path: Path | None):
     config = PreTrainedConfig.from_pretrained(checkpoint, local_files_only=True)
     config.device = device
+    if config.type == "act":
+        # The trained checkpoint already includes the backbone; evaluation needs no download.
+        config.pretrained_backbone_weights = None
     if config.type == "smolvla" and tokenizer_path is not None:
         config.vlm_model_name = str(tokenizer_path.resolve())
     policy_class = get_policy_class(config.type)
@@ -199,6 +202,7 @@ def load_policy(checkpoint: Path, device: str, tokenizer_path: Path | None):
         checkpoint,
         config=config,
         local_files_only=True,
+        strict=config.type == "act",
     )
     preprocessor, postprocessor = make_pre_post_processors(
         config,

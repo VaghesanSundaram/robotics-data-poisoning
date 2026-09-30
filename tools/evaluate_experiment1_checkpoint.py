@@ -124,6 +124,11 @@ def make_env(ckpt_dict: dict, scene_seed: int, marker_present: bool):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(scene_seed)
     local = copy.deepcopy(ckpt_dict)
+    # A saved task description is not an input to image/state-only policies.
+    # Avoid downloading CLIP for an embedding the checkpoint never consumes.
+    shapes = local.get("shape_metadata", {}).get("all_shapes")
+    if shapes is not None and "lang_emb" not in shapes:
+        local["env_metadata"]["lang"] = None
     kwargs = local["env_metadata"]["env_kwargs"]
     kwargs["scene_seed"] = int(scene_seed)
     kwargs["seed"] = int(scene_seed)

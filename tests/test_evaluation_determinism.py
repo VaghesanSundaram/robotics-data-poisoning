@@ -140,3 +140,24 @@ def test_dpc_gate_enforces_marker_use_and_clean_utility_thresholds():
         "marker_absent": {"red_rate": 0.60, "blue_rate": 0.12},
     }
     assert not evaluate_dpc_gate(high_false_activation)["passed"]
+
+
+def test_make_env_omits_unused_language_without_mutating_checkpoint(monkeypatch):
+    checkpoint = {
+        "env_metadata": {"env_kwargs": {}, "lang": "Place the cube in the red tray."},
+        "shape_metadata": {"all_shapes": {"robot0_eef_pos": [3], "policyview_image": [3, 128, 128]}},
+    }
+    captured = []
+    def capture(*, ckpt_dict, **kwargs):
+        captured.append(ckpt_dict)
+        return object(), None
+    monkeypatch.setattr("tools.evaluate_experiment1_checkpoint.FileUtils.env_from_checkpoint", capture)
+    make_env(checkpoint, 1234, False)
+    assert captured[0]["env_metadata"]["lang"] is None
+    assert checkpoint["env_metadata"]["lang"] == "Place the cube in the red tray."
+    checkpoint["shape_metadata"]["all_shapes"]["lang_emb"] = [768]
+    make_env(checkpoint, 1234, False)
+    assert captured[1]["env_metadata"]["lang"] == checkpoint["env_metadata"]["lang"]
+    del checkpoint["shape_metadata"]
+    make_env(checkpoint, 1234, False)
+    assert captured[2]["env_metadata"]["lang"] == checkpoint["env_metadata"]["lang"]

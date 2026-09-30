@@ -118,10 +118,11 @@ are included in a clone. **The final models are separate downloads in the
 three archives organized as `bcrnn/`, `act/`, and `rl/`, including the clean-upstream
 RL follow-up. The release includes an inventory, RL chain mapping, and checksums.
 
-Datasets, raw evaluation artifacts, and videos remain external. A clone can
-install the code and inspect the results; historical evaluation and CSV rebuilding
-need the external artifacts. RL evaluation also needs the original run metadata,
-which is separate from the model downloads.
+The released models can be evaluated with the bundled scene manifests;
+see [evaluate the released models](docs/running.md#evaluate-the-released-models).
+The RL evaluator records the model hashes and evaluation settings automatically.
+Datasets, raw evaluation records, and videos remain external. Rebuilding the
+published CSVs from recorded outcomes requires those original evaluation records.
 
 The result tables identify the completed later BC-RNN and ACT experiments and
 the final staged RL evaluations. Earlier pilot results are not the final study.

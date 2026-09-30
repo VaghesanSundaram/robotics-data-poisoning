@@ -159,7 +159,8 @@ marked placement-success count.
   inputs and simulator contact information at the grasp-to-place handover.
 - Both trays remain on the same side of the cube; the result does not establish
   a general marker concept across different task geometries.
-- Raw artifacts and checkpoints are external. Code cleanup changes source
+- Selected model weights are available in the [model release](https://github.com/VaghesanSundaram/robotics-data-poisoning/releases/tag/models-v1);
+  raw artifacts and run metadata are not distributed. Code cleanup changes source
   hashes; the cleaned environment is not proof of exact historical dependencies.
 
 The original evaluation records contain operational pass/fail checks. The

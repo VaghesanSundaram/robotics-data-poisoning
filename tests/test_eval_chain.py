@@ -307,3 +307,69 @@ def test_approach_evaluation_rejects_changed_manifest_before_loading_model(tmp_p
         rl_eval_stage.approach_main(["--checkpoint-root", str(source),
                                    "--root", str(tmp_path / "output")])
     assert not (tmp_path / "output").exists()
+
+
+def test_exported_model_resolves_without_creating_training_records(tmp_path):
+    import hashlib
+    model = tmp_path / "selected.pt"
+    model.write_bytes(b"exported model")
+    source = chain.evaluation_source(tmp_path, "place")
+    assert source["checkpoint"] == model
+    assert source["sha256"] == hashlib.sha256(model.read_bytes()).hexdigest()
+    assert source["contract"] is None
+    assert source["provenance"]["mode"] == "exported_checkpoint"
+    assert list(tmp_path.iterdir()) == [model]
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_exported_directory_refuses_missing_or_ambiguous_models(tmp_path, count):
+    for index in range(count):
+        (tmp_path / f"model-{index}.pt").write_bytes(b"model")
+    with pytest.raises(ValueError, match="exactly one"):
+        chain.evaluation_source(tmp_path, "place")
+
+
+def test_incomplete_recorded_run_cannot_fall_back_to_export_mode(tmp_path):
+    (tmp_path / "model.pt").write_bytes(b"model")
+    (tmp_path / "run-contract.json").write_text("{}")
+    with pytest.raises(ValueError, match="incomplete recorded"):
+        chain.evaluation_source(tmp_path, "grasp")
+
+
+def test_recorded_run_preserves_checkpoint_and_scene_checks(tmp_path):
+    import json
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"model")
+    (tmp_path / "final-result.json").write_text("{}")
+    contract = {"manifest_sha256": chain.sha256(chain.MANIFEST)}
+    (tmp_path / "run-contract.json").write_text(json.dumps(contract))
+    (tmp_path / "latest.json").write_text(json.dumps({"path": model.name, "sha256": chain.sha256(model)}))
+    source = chain.evaluation_source(tmp_path, "grasp")
+    assert source["provenance"]["mode"] == "recorded_run"
+    assert source["contract"] == contract
+    model.write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        chain.evaluation_source(tmp_path, "grasp")
+    contract["manifest_sha256"] = "0" * 64
+    (tmp_path / "run-contract.json").write_text(json.dumps(contract))
+    with pytest.raises(ValueError, match="manifest hash differs"):
+        chain.evaluation_source(tmp_path, "grasp")
+
+
+def test_export_and_recorded_protocol_select_identical_layouts():
+    import json
+    dev = json.loads(chain.MANIFEST.read_text())["splits"]["dev"]
+    gate, holdout = chain.grasp_layout_sets(dev)
+    contract = {"reserved_holdout_layout_ids": [x["layout_id"] for x in holdout],
+                "evaluation": {"gate_layout_ids": [x["layout_id"] for x in gate]}}
+    recorded = {stage: {"contract": contract} for stage in ("grasp", "place")}
+    exported = {stage: {"contract": None} for stage in ("grasp", "place")}
+    for wide, expected in ((False, 16), (True, 34)):
+        original, _ = chain.evaluation_layouts(recorded, wide)
+        actual, _ = chain.evaluation_layouts(exported, wide)
+        assert actual == original and len(actual) == expected
+    with pytest.raises(ValueError, match="unknown or excluded"):
+        chain.evaluation_layouts(exported, requested=[gate[0]["layout_id"]])
+    contract["reserved_holdout_layout_ids"] = []
+    with pytest.raises(ValueError, match="holdout differs"):
+        chain.evaluation_layouts(recorded)

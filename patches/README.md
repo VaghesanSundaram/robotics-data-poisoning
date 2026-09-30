@@ -10,10 +10,11 @@ checks for each change before applying it and refuses unexpected local edits.
 | `robomimic-checkpoint-cadence.patch` | Checkpoint frequency, verified numbered resume files, random-state restoration, deterministic settings, cooperative pause, output paths, and error propagation. |
 | `robomimic-observation-order.patch` | Preserves configured camera and robot-state feature ordering. |
 | `robomimic-pause-architecture.patch` | Correct pause receipt labels. Already included in the checkpoint patch; the installer recognizes this and skips duplicate application. |
+| `robomimic-lazy-language.patch` | Loads the optional CLIP model only when language embeddings are requested; image/state BC-RNN evaluation needs no CLIP download. |
 | `lerobot-column-projection.patch` | Avoids decoding unnecessary image columns while reading action windows. |
 | `lerobot-cooperative-pause.patch` | Saves a verified checkpoint and exits on a pause request; also seeds a dedicated data-loader random generator. |
 
-These changes predate repository cleanup. Observation order and random-number
+The original five patches predate repository cleanup. Observation order and random-number
 handling can affect behavior or training. We have not established that every
 change was necessary for the reported results.
 
@@ -24,4 +25,6 @@ the dependency state used by each historical run.
 
 The installer provides a consistent setup for the cleaned code. It does not claim
 an exact reconstruction of every historical environment or train any model.
-Original patch files are preserved unchanged.
+Original patch files are preserved unchanged. The lazy-language patch was added
+after a fresh-cache evaluation exposed an unnecessary download; it does not
+change the released BC-RNN weights or add language inputs to those policies.

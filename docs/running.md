@@ -8,8 +8,70 @@ export and ACT need the LeRobot environment. Set up both environments before a
 fresh imitation-learning run. RL collects experience during training. Run all
 commands from the repository root.
 
-These instructions run new experiments. Exact historical evaluations require the
-external data and checkpoints described in the [README](../README.md#what-is-included).
+These instructions run new experiments. The selected final models are available
+in the [model release](https://github.com/VaghesanSundaram/robotics-data-poisoning/releases/tag/models-v1).
+The released models can be evaluated without training data or historical run
+folders. Rebuilding the published CSVs from saved outcomes requires the original
+evaluation records, which are not distributed.
+
+## Evaluate the released models
+
+Download the archives from the model release and extract them into `checkpoints/`
+so that it contains `bcrnn/`, `act/`, and `rl/`. These commands load the selected
+models and run the simulator; they do not train. Use a new output directory each time.
+
+With `.venv-rl-bc` active, evaluate BC-RNN:
+
+```bash
+export MUJOCO_GL=egl
+python tools/evaluate_experiment1_checkpoint.py \
+  --checkpoint checkpoints/bcrnn/clean/model_epoch_1000.pth \
+  --manifest artifacts/manifests/experiment1-recovery-development-v1.json \
+  --gate descriptive --video-layouts 0 --output artifacts/eval-bcrnn-clean
+```
+
+With `.venv-lerobot` active, evaluate ACT:
+
+```bash
+python tools/evaluate_architecture_checkpoint.py \
+  --checkpoint checkpoints/act/clean/pretrained_model \
+  --model-input-orientation historical_bottom_first_v1 \
+  --output artifacts/eval-act-clean
+```
+
+For either imitation model, substitute `control` or `poison-7.5pct` for `clean`
+and change the output directory. Both commands evaluate 50 layouts with the
+marker absent and present. Add `--count 1` for a quick two-episode check.
+Keep the complete ACT `pretrained_model` directory, including its processors.
+
+With `.venv-rl-bc` active, evaluate the clean-upstream RL follow-up:
+
+```bash
+python tools/rl_eval_chain.py \
+  --approach-root checkpoints/rl/clean/approach \
+  --grasp-root checkpoints/rl/clean/grasp \
+  --place-root checkpoints/rl/clean-upstream-50pct/place \
+  --root artifacts/eval-rl-clean-upstream
+```
+
+This runs 34 layouts in both marker states. Add `--layouts dev-s2006418` for a
+quick two-episode check. For the original attacked chains, use
+`rl/marker-shared/approach`, `rl/marker-shared/grasp`, and `rl/50pct/place`,
+`rl/30pct/place`, or `rl/10pct/place`. For the clean baseline, use all three
+`rl/clean/` stages and add `--marker absent --no-conditional-target`.
+All paths are under `checkpoints/`.
+
+Each exported RL stage directory must contain exactly one `.pt` or `.pth` model.
+The evaluator uses its saved model configuration and the bundled layout protocol,
+then writes model hashes, source hashes, package versions, scene settings, and
+results into the new output directory. It does not create training records in the
+model folders. Existing run folders still undergo their contract and checkpoint
+checks; incomplete run metadata is reported instead of silently ignored.
+
+These commands produce a new evaluation with the current code and environment.
+They do not claim an exact reconstruction of every historical runtime. The raw
+outcomes distinguish released placement from incomplete episodes; inspect both
+marker slices when comparing with the [reported results](results.md).
 
 ## BC-RNN and shared source data
 
@@ -91,9 +153,11 @@ python tools/evaluate_architecture_checkpoint.py \
   --output artifacts/act/eval-clean
 ```
 
-For control, use `--condition control` and the
-`marker_use_control/200000` checkpoint. For poison, use
-`--condition poison` and the `poison_7_5_schedule_a/100000` checkpoint.
+For control, use `--condition control` and
+`artifacts/act/runs/act/marker_use_control/full/checkpoints/200000/pretrained_model`.
+For poison, use `--condition poison` and
+`artifacts/act/runs/act/poison_7_5_schedule_a/full/checkpoints/100000/pretrained_model`.
+Use a distinct specification file and output directory for each condition.
 Each evaluation writes a new output directory and uses the 50-layout
 development manifest. ACT uses the recorded
 `historical_bottom_first_v1` model input orientation.
@@ -148,10 +212,11 @@ Evaluate a completed stage with `tools/rl_eval_stage.py approach`, `grasp`, or
 Render saved rollout actions with
 `python tools/rl_render.py --stage chain --eval-dir <evaluation-dir> --limit 1`; rendering does not train a model.
 
-Historical checkpoints and raw results remain in external local storage; they
-are not included in a clone. Cleanup changes source
-hashes and command names, so old run contracts should remain historical records;
-the cleaned source is not an exact hash match for resuming those old runs.
+The chain evaluator accepts either complete historical run directories or the
+exported model directories described above. Resuming training remains a separate
+operation requiring the original training state. Cleanup changes source hashes
+and command names, so old run contracts remain historical records; the cleaned
+source is not an exact hash match for resuming those old runs.
 
 
 ## Optional CPU validation
@@ -192,9 +257,9 @@ Shared RL adapters and checkpoint helpers are in `tools/drq_online.py`.
 and development evaluation gates. `tests/` contains the corresponding checks.
 `results/` contains published measurements and their CSV builder.
 
-The frozen manifests in `artifacts/manifests/` are included. Datasets,
-checkpoints, replay buffers, videos, logs, and other artifacts are local storage
-and are not included. The manual collector remains available as
+The frozen manifests in `artifacts/manifests/` are included in Git. Selected
+models are separate release downloads. Datasets, replay buffers, videos, logs,
+and raw run metadata are not distributed. The manual collector remains available as
 `tools/collect_two_tray_demo.py`; the reported data came from the scripted expert.
 
 ## Dependency records
